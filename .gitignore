@@ -1,0 +1,29 @@
+﻿# Secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+
+# Local data and databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Editors
+.idea/
+.vscode/
