@@ -59,6 +59,11 @@ function newConversation() {
 function sourceCards(sources = []) {
   if (!sources.length) return "";
   const entries = sources.map((source) => {
+    const score = Number(source.relevance);
+    const hasScore = source.relevance !== null
+      && source.relevance !== undefined
+      && Number.isFinite(score);
+    const lowConfidence = hasScore && score < 0.5;
     const section = source.section
       ? `${source.chapter ? `${source.chapter}, ` : ""}Section ${source.section}`
       : source.chapter || source.reference;
@@ -79,7 +84,7 @@ function sourceCards(sources = []) {
     )).join("");
     return `
     <article class="source-card" data-source-id="${escapeHTML(source.id)}">
-      <div class="source-card-head"><span class="source-id">${escapeHTML(source.id)}</span><span class="source-title">${escapeHTML(source.title || source.document)}</span></div>
+      <div class="source-card-head"><span class="source-id">${escapeHTML(source.id)}</span><span class="source-title">${escapeHTML(source.title || source.document)}</span>${hasScore ? `<span class="source-score${lowConfidence ? " low-confidence" : ""}">${lowConfidence ? "Low confidence" : "Similarity"} · ${score.toFixed(4)}</span>` : ""}</div>
       <div class="source-ref">${sourceReference}</div>
       <span class="source-evidence-label">Retrieved passage (as indexed)</span>
       <p class="source-excerpt">${escapeHTML(source.excerpt || "")}</p>
@@ -107,7 +112,7 @@ function appendMessage(message, options = {}) {
   article.className = `message ${role === "user" ? "user" : "assistant"}`;
   article.dataset.messageId = message.message_id || message.id || "";
   if (role === "assistant") {
-    article.innerHTML = `<div class="assistant-mark" aria-hidden="true">R</div><div class="message-bubble">${formatAnswer(content, message.sources)}</div>${message.sufficient_evidence === false ? '<div class="evidence-warning">Retrieved evidence was not sufficiently close to support a reliable conclusion. Treat these matches as leads for review, not confirmed requirements.</div>' : ""}${sourceCards(message.sources)}${actionButtons({ ...message, content })}`;
+    article.innerHTML = `<div class="assistant-mark" aria-hidden="true">R</div><div class="message-bubble">${formatAnswer(content, message.sources)}</div>${sourceCards(message.sources)}${actionButtons({ ...message, content })}`;
   } else {
     article.innerHTML = `<div class="message-bubble">${formatAnswer(content)}</div>`;
   }

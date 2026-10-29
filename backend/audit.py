@@ -296,6 +296,7 @@ def _request_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
 def read_audit_requests(
     limit: int = 50,
     request_id: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict[str, Any]]:
     if not AUDIT_LOG_PATH.is_file():
         return []
@@ -323,7 +324,16 @@ def read_audit_requests(
         requests.setdefault(trace_id, []).append(event)
 
     ordered = sorted(
-        requests.values(),
+        (
+            events
+            for events in requests.values()
+            if user_id is None
+            or any(
+                event.get("event") == "request_received"
+                and event.get("user_id") == user_id
+                for event in events
+            )
+        ),
         key=lambda events: events[0].get("timestamp", ""),
         reverse=True,
     )

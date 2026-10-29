@@ -214,9 +214,9 @@ def build_pdf(report: dict[str, Any], path: Path) -> int:
     doc = SimpleDocTemplate(
         str(path), pagesize=A4, rightMargin=19 * mm, leftMargin=19 * mm,
         topMargin=19 * mm, bottomMargin=18 * mm,
-        title=report["title"], author="RBI Regulatory Intelligence",
+        title=report["title"], author="RegulaMind AI",
     )
-    story: list[Any] = [Spacer(1, 45 * mm), _para("RBI REGULATORY INTELLIGENCE", styles["FinePrint"]), Spacer(1, 7 * mm)]
+    story: list[Any] = [Spacer(1, 45 * mm), _para("REGULAMIND AI", styles["FinePrint"]), Spacer(1, 7 * mm)]
     story.extend([
         _para(report["title"], styles["ReportTitle"]),
         Spacer(1, 8 * mm),
@@ -342,7 +342,7 @@ def _draw_page(canvas: Any, doc: Any) -> None:
     canvas.line(19 * mm, 14 * mm, width - 19 * mm, 14 * mm)
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.HexColor("#657487"))
-    canvas.drawString(19 * mm, 9 * mm, "RBI Regulatory Intelligence | Evidence-led review")
+    canvas.drawString(19 * mm, 9 * mm, "RegulaMind AI | Evidence-led review")
     canvas.drawRightString(width - 19 * mm, 9 * mm, f"{doc.page}")
     canvas.restoreState()
 

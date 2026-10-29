@@ -1,6 +1,6 @@
-# RBI Regulatory Intelligence - React frontend
+# RegulaMind AI - React frontend
 
-This folder contains the React/Vite chat interface for the RBI Regulatory Intelligence application. The frontend collects questions, displays retrieved RBI evidence and answers, and manages saved conversations. The FastAPI backend handles persistence, Qdrant retrieval, and optional Groq-generated answers.
+This folder contains the React/Vite chat interface for RegulaMind AI. The frontend collects questions, displays retrieved RBI evidence and answers, and manages saved conversations. The FastAPI backend handles persistence, Qdrant retrieval, and optional Groq-generated answers.
 
 For the full backend, ingestion, and environment configuration guide, see the [project README](../README.md).
 

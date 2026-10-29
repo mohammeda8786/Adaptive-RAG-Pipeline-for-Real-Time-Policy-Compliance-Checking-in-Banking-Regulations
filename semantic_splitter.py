@@ -24,9 +24,9 @@ from typing import Any
 # CONFIGURATION
 # ============================================================
 
-INPUT_FILE = Path("data/rbi_text/rbi_008.txt")
-OUTPUT_FILE = Path("data/rbi_text/rbi_008_chunks.json")
-PROGRESS_FILE = Path("data/rbi_text/rbi_008_progress.json")
+INPUT_FILE = Path("data/rbi_text/rbi_020.txt")
+OUTPUT_FILE = Path("data/rbi_text/rbi_020_chunks.json")
+PROGRESS_FILE = Path("data/rbi_text/rbi_020_progress.json")
 
 TARGET_CHARS = 1100
 MAX_CHARS = 1700
