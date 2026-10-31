@@ -3,16 +3,21 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import sqlite3
+from base64 import urlsafe_b64encode
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import urlencode, urlsplit
 
 import jwt
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from jwt.exceptions import InvalidTokenError
+import requests
 
 from .storage import connect, utc_now
 
@@ -21,10 +26,18 @@ JWT_ISSUER = "rbi-regulatory-intelligence"
 JWT_COOKIE_NAME = "rbi_access_token"
 JWT_COOKIE_PATH = "/api"
 JWT_ALGORITHM = "HS256"
+GOOGLE_STATE_COOKIE = "rbi_google_oauth_state"
+GOOGLE_VERIFIER_COOKIE = "rbi_google_oauth_verifier"
+GOOGLE_COOKIE_PATH = "/api/auth"
+GOOGLE_AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_USERINFO_URL = "https://openidconnect.googleapis.com/v1/userinfo"
+GOOGLE_FLOW_MAX_AGE = 300
 PASSWORD_HASH_N = 2**14
 PASSWORD_HASH_R = 8
 PASSWORD_HASH_P = 1
 PASSWORD_HASH_LENGTH = 64
+logger = logging.getLogger(__name__)
 
 
 class AuthConfigurationError(RuntimeError):
@@ -102,6 +115,234 @@ def clear_auth_cookie(response: Response) -> None:
         samesite="lax",
         path=JWT_COOKIE_PATH,
     )
+
+
+def google_oauth_is_configured() -> bool:
+    if not all(
+        os.getenv(name, "").strip()
+        for name in (
+            "GOOGLE_CLIENT_ID",
+            "GOOGLE_CLIENT_SECRET",
+            "GOOGLE_REDIRECT_URI",
+        )
+    ):
+        return False
+    try:
+        _google_redirect_uri()
+    except HTTPException:
+        return False
+    return True
+
+
+def _google_redirect_uri() -> str:
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", "").strip()
+    try:
+        parsed = urlsplit(redirect_uri)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in requires a valid secure redirect URI.",
+        ) from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.path != "/api/auth/google/callback"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or (
+            parsed.scheme != "https"
+            and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        )
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in requires a valid secure redirect URI.",
+        )
+    return redirect_uri
+
+
+def _frontend_url() -> str:
+    frontend_url = os.getenv("RBI_FRONTEND_URL", "http://127.0.0.1:5173").strip()
+    try:
+        parsed = urlsplit(frontend_url)
+        hostname = parsed.hostname
+        parsed.port
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in frontend URL must use HTTPS.",
+        ) from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or (
+            parsed.scheme != "https"
+            and parsed.hostname not in {"localhost", "127.0.0.1", "::1"}
+        )
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in frontend URL must use HTTPS.",
+        )
+    return frontend_url.rstrip("/")
+
+
+def _oauth_cookie(response: Response, key: str, value: str) -> None:
+    response.set_cookie(
+        key=key,
+        value=value,
+        max_age=GOOGLE_FLOW_MAX_AGE,
+        httponly=True,
+        secure=jwt_cookie_secure(),
+        samesite="lax",
+        path=GOOGLE_COOKIE_PATH,
+    )
+
+
+def _clear_google_oauth_cookies(response: Response) -> None:
+    for key in (GOOGLE_STATE_COOKIE, GOOGLE_VERIFIER_COOKIE):
+        response.delete_cookie(
+            key=key,
+            httponly=True,
+            secure=jwt_cookie_secure(),
+            samesite="lax",
+            path=GOOGLE_COOKIE_PATH,
+        )
+
+
+def _google_callback_redirect(error: str | None = None) -> RedirectResponse:
+    url = f"{_frontend_url()}/login"
+    if error:
+        url += f"?google_error={error}"
+    response = RedirectResponse(url, status_code=303)
+    _clear_google_oauth_cookies(response)
+    return response
+
+
+def _google_userinfo(code: str, verifier: str) -> dict[str, Any]:
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    redirect_uri = _google_redirect_uri()
+    try:
+        token_response = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": code,
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "redirect_uri": redirect_uri,
+                "grant_type": "authorization_code",
+                "code_verifier": verifier,
+            },
+            timeout=(3, 10),
+        )
+        token_response.raise_for_status()
+        token_data = token_response.json()
+        access_token = (
+            token_data.get("access_token")
+            if isinstance(token_data, dict)
+            else None
+        )
+        if not isinstance(access_token, str) or not access_token:
+            raise ValueError("Google did not return an access token.")
+        profile_response = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=(3, 10),
+        )
+        profile_response.raise_for_status()
+        profile = profile_response.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning(
+            "Google sign-in profile request failed (%s).",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Google sign-in could not be completed. Please try again.",
+        ) from exc
+
+    if (
+        not isinstance(profile, dict)
+        or not isinstance(profile.get("sub"), str)
+        or not profile["sub"]
+        or profile.get("email_verified") is not True
+        or not isinstance(profile.get("email"), str)
+        or len(profile["email"]) > 254
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Google did not provide a verified email address.",
+        )
+    try:
+        profile["email"] = normalize_email(profile["email"])
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=401,
+            detail="Google did not provide a valid email address.",
+        ) from exc
+    return profile
+
+
+def _google_account(profile: dict[str, Any]) -> dict[str, str]:
+    google_sub = profile["sub"]
+    email = profile["email"]
+    name = str(profile.get("name") or email.partition("@")[0]).strip()[:120]
+    name = name or email.partition("@")[0]
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT id, name, email, google_sub FROM users WHERE google_sub = ?",
+            (google_sub,),
+        ).fetchone()
+        if row:
+            connection.execute(
+                "UPDATE users SET name = ?, email = ? WHERE id = ?",
+                (name, email, row["id"]),
+            )
+        else:
+            row = connection.execute(
+                "SELECT id, name, email, google_sub FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+            if row and row["google_sub"] and row["google_sub"] != google_sub:
+                raise HTTPException(
+                    status_code=409,
+                    detail="This email address is linked to a different Google account.",
+                )
+            if row:
+                connection.execute(
+                    "UPDATE users SET name = ?, google_sub = ? WHERE id = ?",
+                    (name, google_sub, row["id"]),
+                )
+            else:
+                user_id = secrets.token_urlsafe(24)
+                connection.execute(
+                    "INSERT INTO users "
+                    "(id, name, email, password_hash, created_at, google_sub) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        user_id,
+                        name,
+                        email,
+                        hash_password(secrets.token_urlsafe(48)),
+                        utc_now(),
+                        google_sub,
+                    ),
+                )
+                row = connection.execute(
+                    "SELECT id, name, email FROM users WHERE id = ?",
+                    (user_id,),
+                ).fetchone()
+    return _public_user(row)
 
 
 def token_from_request(request: Request) -> str | None:
@@ -184,6 +425,87 @@ def login(request: LoginRequest, response: Response) -> dict[str, Any]:
     return {"user": _public_user(row), "authenticated": True}
 
 
+@router.get("/providers")
+def auth_providers() -> dict[str, bool]:
+    return {"google": google_oauth_is_configured()}
+
+
+@router.get("/google")
+def google_login() -> RedirectResponse:
+    if not google_oauth_is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured on this server.",
+        )
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    challenge = urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+    challenge = challenge.rstrip(b"=").decode("ascii")
+    response = RedirectResponse(
+        f"{GOOGLE_AUTHORIZATION_URL}?"
+        + urlencode(
+            {
+                "client_id": os.getenv("GOOGLE_CLIENT_ID", "").strip(),
+                "redirect_uri": _google_redirect_uri(),
+                "response_type": "code",
+                "scope": "openid email profile",
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+            }
+        ),
+        status_code=303,
+    )
+    _oauth_cookie(response, GOOGLE_STATE_COOKIE, state)
+    _oauth_cookie(response, GOOGLE_VERIFIER_COOKIE, verifier)
+    return response
+
+
+@router.get("/google/callback")
+def google_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    expected_state = request.cookies.get(GOOGLE_STATE_COOKIE, "")
+    verifier = request.cookies.get(GOOGLE_VERIFIER_COOKIE, "")
+    if (
+        not state
+        or not expected_state
+        or not hmac.compare_digest(state, expected_state)
+        or not verifier
+    ):
+        return _google_callback_redirect("invalid_state")
+    if error or not code:
+        return _google_callback_redirect("cancelled")
+    if not auth_is_configured():
+        return _google_callback_redirect("server_configuration")
+
+    try:
+        profile = _google_userinfo(code, verifier)
+        user = _google_account(profile)
+        token, max_age = create_access_token(user["id"])
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            return _google_callback_redirect("account_conflict")
+        if exc.status_code == 401:
+            return _google_callback_redirect("unverified_email")
+        if exc.status_code == 503:
+            return _google_callback_redirect("server_configuration")
+        if exc.status_code == 502:
+            return _google_callback_redirect("provider_error")
+        raise
+    except sqlite3.IntegrityError:
+        logger.exception("Google sign-in account could not be saved.")
+        return _google_callback_redirect("account_conflict")
+
+    response = RedirectResponse(_frontend_url() + "/", status_code=303)
+    _clear_google_oauth_cookies(response)
+    set_auth_cookie(response, token, max_age)
+    return response
+
+
 @router.get("/me")
 def current_user(request: Request) -> dict[str, Any]:
     return {"user": user_from_request(request)}
@@ -207,7 +529,7 @@ def _jwt_secret() -> str:
 
 def token_lifetime_minutes() -> int:
     try:
-        minutes = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+        minutes = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
     except ValueError as exc:
         raise AuthConfigurationError(
             "JWT_ACCESS_TOKEN_EXPIRE_MINUTES must be a whole number."
@@ -303,4 +625,11 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
         raise
     if not isinstance(payload.get("sub"), str):
         return None
+    issued_at = payload.get("iat")
+    if not isinstance(issued_at, (int, float)):
+        raise InvalidTokenError("Access token has an invalid issue time.")
+    if datetime.now(timezone.utc).timestamp() >= (
+        issued_at + token_lifetime_minutes() * 60
+    ):
+        raise jwt.ExpiredSignatureError("Access token has expired.")
     return payload

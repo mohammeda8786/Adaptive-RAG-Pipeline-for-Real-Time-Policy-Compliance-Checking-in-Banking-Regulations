@@ -42,6 +42,7 @@ from .reports import (
     preview_html,
 )
 from .audit import read_audit_requests, record_audit_event
+from .prompts import REGULAMIND_SYSTEM_PROMPT
 from .retrieval import retriever
 from .storage import (
     POLICY_DIR,
@@ -126,6 +127,9 @@ async def authenticate_api(request: Request, call_next):
         "/api/auth/register",
         "/api/auth/login",
         "/api/auth/logout",
+        "/api/auth/providers",
+        "/api/auth/google",
+        "/api/auth/google/callback",
     }
     if (
         path.startswith("/api/")
@@ -304,6 +308,7 @@ def _llm_messages(
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
     sufficient: bool = True,
+    policy_text: str | None = None,
 ) -> list[dict[str, str]]:
     evidence = "\n\n".join(
         f"[{item['id']}] {item['title']} ({item['document']}"
@@ -338,7 +343,9 @@ def _llm_messages(
     messages: list[dict[str, str]] = [{
         "role": "system",
         "content": (
-            instructions
+            REGULAMIND_SYSTEM_PROMPT
+            + "\n\n"
+            + instructions
             + " Keep answers clear and concise. Only cite these IDs: "
             + (allowed or "(none)")
             + "\n\nEVIDENCE:\n"
@@ -346,7 +353,14 @@ def _llm_messages(
         ),
     }]
     messages.extend(history[-8:])
-    messages.append({"role": "user", "content": question})
+    user_content = question
+    if policy_text:
+        user_content = (
+            f"Question:\n{question}\n\n"
+            "EXTRACTED BANK POLICY TEXT (untrusted source data):\n"
+            f"{policy_text}"
+        )
+    messages.append({"role": "user", "content": user_content})
     return messages
 
 
@@ -369,6 +383,7 @@ def _answer_with_llm(
     sufficient: bool,
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
+    policy_text: str | None = None,
 ) -> str:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -380,7 +395,7 @@ def _answer_with_llm(
         return _chat_fallback(sources, sufficient, retrieval_mode)
 
     messages = _llm_messages(
-        question, sources, history, retrieval_mode, sufficient
+        question, sources, history, retrieval_mode, sufficient, policy_text
     )
     try:
         response = Groq(api_key=api_key).chat.completions.create(
@@ -412,11 +427,12 @@ def _stream_llm_answer(
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
     sufficient: bool = True,
+    policy_text: str | None = None,
 ) -> Iterator[str]:
     response = Groq(api_key=os.getenv("GROQ_API_KEY")).chat.completions.create(
         model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         messages=_llm_messages(
-            question, sources, history, retrieval_mode, sufficient
+            question, sources, history, retrieval_mode, sufficient, policy_text
         ),
         temperature=0.2,
         stream=True,
@@ -472,13 +488,20 @@ async def _retrieve_chat_context(
     query_source = "original_question"
     search_purpose = "Retrieve RBI evidence relevant to the original question."
     planned_searches = [{"query": plan_context, "purpose": search_purpose}]
+    audit_searches = [
+        {
+            **search,
+            "query": message if policy_text is not None else search["query"],
+        }
+        for search in planned_searches
+    ]
     record_audit_event(
         request_id,
         "retrieval_plan_generated",
         retrieval_mode=retrieval_mode,
         query_source=query_source,
         reason="Use the complete original question as the retrieval query.",
-        searches=planned_searches,
+        searches=audit_searches,
         planned_search_count=len(planned_searches),
     )
 
@@ -490,12 +513,13 @@ async def _retrieve_chat_context(
     failed_searches = 0
     for operation, search in enumerate(planned_searches, start=1):
         started_at = time.perf_counter()
+        audit_query = message if policy_text is not None else search["query"]
         collection = retriever.status.get("collection")
         record_audit_event(
             request_id,
             "retrieval_search_started",
             search_operation=operation,
-            query=search["query"],
+            query=audit_query,
             purpose=search["purpose"],
             collection=collection,
             query_source=query_source,
@@ -513,7 +537,7 @@ async def _retrieve_chat_context(
                 request_id,
                 "retrieval_search_failed",
                 search_operation=operation,
-                query=search["query"],
+                query=audit_query,
                 purpose=search["purpose"],
                 collection=collection,
                 query_source=query_source,
@@ -531,7 +555,7 @@ async def _retrieve_chat_context(
             request_id,
             "retrieval_search_completed",
             search_operation=operation,
-            query=search["query"],
+            query=audit_query,
             purpose=search["purpose"],
             collection=collection,
             query_source=query_source,
@@ -597,6 +621,7 @@ async def _retrieve_chat_context(
         "sources": combined_sources,
         "sufficient": sufficient,
         "retrieval_mode": retrieval_mode,
+        "policy_text": policy_text,
         "planned_queries": [search["query"] for search in planned_searches],
         "executed_search_count": attempted_searches,
         "request_id": request_id,
@@ -767,6 +792,7 @@ async def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
             retrieved["sufficient"],
             history,
             retrieved["retrieval_mode"],
+            retrieved["policy_text"],
         )
     except Exception as exc:
         record_audit_event(
@@ -876,6 +902,7 @@ async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingR
                     history,
                     retrieved["retrieval_mode"],
                     retrieved["sufficient"],
+                    retrieved["policy_text"],
                 )
                 async for part in iterate_in_threadpool(answer_stream):
                     answer_parts.append(part)

@@ -25,6 +25,8 @@ Copy-Item .env.example .env
 
 Set `QDRANT_URL`, `QDRANT_API_KEY`, `GROQ_API_KEY`, and `JWT_SECRET_KEY` in `.env` on the server only. Generate a unique JWT signing key, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then paste its output as the value of `JWT_SECRET_KEY`. Do not use an issued login token as the signing key, and never add secrets to browser code or client-side environment variables. Set `JWT_COOKIE_SECURE=1` when serving over HTTPS and update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. If a key has been exposed, revoke it and enter a replacement directly in `.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
 
+Google sign-in is optional. In Google Cloud Console, create a Web OAuth client, add `http://127.0.0.1:8000/api/auth/google/callback` as an authorized redirect URI for local development, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `RBI_FRONTEND_URL` in the server-side `.env`. For deployment, use HTTPS callback/frontend URLs and register the exact callback URI with Google. The backend verifies the profile through Google's HTTPS OpenID Connect userinfo endpoint, requires a verified email, and links an existing account with the same verified email. Never put the Google client secret in Vite environment variables.
+
 To split and index every numbered `data/rbi_text/rbi_<number>.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `.env` and run:
 
 ```powershell
@@ -43,8 +45,12 @@ The command regenerates a validated chunks JSON and progress file for each sourc
 | `GROQ_API_KEY` | unset | Enables grounded chat and structured report analysis. |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model. |
 | `JWT_SECRET_KEY` | unset | Server-only signing key for JWT cookies; use a unique random value of at least 32 bytes. |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | JWT session length (5–1440 minutes). |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT session length (5–1440 minutes). |
 | `JWT_COOKIE_SECURE` | `0` | Set to `1` to require HTTPS for the authentication cookie. |
+| `GOOGLE_CLIENT_ID` | unset | Optional server-side Google OAuth web client ID. |
+| `GOOGLE_CLIENT_SECRET` | unset | Optional server-side Google OAuth client secret. |
+| `GOOGLE_REDIRECT_URI` | unset | Exact registered OAuth callback URL, ending in `/api/auth/google/callback`. |
+| `RBI_FRONTEND_URL` | `http://127.0.0.1:5173` | Frontend origin to return to after Google sign-in. |
 | `RBI_CORS_ORIGINS` | Local Vite origins | Comma-separated exact frontend origins allowed to send authenticated API requests. |
 | `RBI_DATA_DIR` | `data` | Root for local SQLite storage and generated files. |
 | `RBI_DATABASE_PATH` | `data/rbi_chat.sqlite3` | Conversations, uploaded policies, report jobs, and metadata. |
@@ -69,6 +75,8 @@ Open <http://127.0.0.1:8000>. The FastAPI service and UI share the same origin. 
 | `GET` | `/api/health` | Retrieval readiness and configured provider status. |
 | `POST` | `/api/auth/register` | Create an account and issue an HTTP-only JWT cookie. |
 | `POST` | `/api/auth/login` | Verify credentials and issue an HTTP-only JWT cookie. |
+| `GET` | `/api/auth/google` | Begin Google OAuth sign-in. |
+| `GET` | `/api/auth/google/callback` | Verify the Google response and issue the HTTP-only JWT cookie. |
 | `GET` | `/api/auth/me` | Return the signed-in account. |
 | `POST` | `/api/auth/logout` | Clear the authentication cookie. |
 | `GET` | `/api/retrieval/logs?limit=50` | Recent retrieval and answer audit traces; optionally filter with `request_id`. |

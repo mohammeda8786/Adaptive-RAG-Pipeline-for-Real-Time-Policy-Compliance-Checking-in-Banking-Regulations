@@ -26,6 +26,7 @@ from reportlab.platypus import (
 )
 
 from .retrieval import retriever
+from .prompts import REGULAMIND_SYSTEM_PROMPT
 from .storage import REPORT_DIR
 
 
@@ -151,7 +152,7 @@ def analyze_evidence(
         messages=[
             {
                 "role": "system",
-                "content": "You are a cautious banking regulatory analyst. Never fabricate evidence.",
+                "content": REGULAMIND_SYSTEM_PROMPT,
             },
             {"role": "user", "content": prompt},
         ],

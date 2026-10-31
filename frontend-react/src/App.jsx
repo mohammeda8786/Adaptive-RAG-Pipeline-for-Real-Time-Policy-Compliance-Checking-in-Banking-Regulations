@@ -507,7 +507,9 @@ function App() {
           <div className="topbar-actions">
             <span className="model-indicator"><i></i><span id="modelLabel">RBI sources</span></span>
             <RetrievalLogs />
-            <a className="topbar-auth-link" href="/login">Sign in</a>
+            {user
+              ? <button className="topbar-auth-link" type="button" onClick={signOut}>Log out</button>
+              : <a className="topbar-auth-link" href="/login">Sign in</a>}
           </div>
         </header>
 

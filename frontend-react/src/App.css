@@ -268,6 +268,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .auth-eyebrow { display: flex; align-items: center; gap: 9px; color: var(--muted); font: 9px 'IBM Plex Mono', monospace; letter-spacing: .07em; }
 .auth-card h1 { margin: 16px 0 7px; color: var(--navy-2); font-size: 27px; line-height: 1.2; font-weight: 600; }
 .auth-intro { color: #6d7b89; font-size: 12px; line-height: 1.6; }
+.auth-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 43px; margin-top: 20px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: #33475b; font-size: 12px; font-weight: 600; text-decoration: none; }
+.auth-google:hover { border-color: #a9bfce; background: #fbfdfe; }
+.auth-google:disabled { color: #687789; background: #f7f8f9; cursor: not-allowed; }
+.auth-google svg { width: 17px; height: 17px; stroke: none; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: #8a96a3; font-size: 10px; }
+.auth-divider::before, .auth-divider::after { height: 1px; flex: 1; background: var(--line); content: ''; }
+.auth-provider-note { margin: 8px 0 0; color: var(--muted); text-align: center; font-size: 10px; }
 .auth-form { display: grid; gap: 15px; margin-top: 22px; }
 .auth-field { display: grid; gap: 6px; color: #42566b; font-size: 11px; font-weight: 600; }
 .auth-field input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--ink); font-size: 12px; font-weight: 400; }
