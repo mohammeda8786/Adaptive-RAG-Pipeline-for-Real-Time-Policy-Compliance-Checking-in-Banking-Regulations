@@ -14,15 +14,26 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Iterator, Literal
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env", override=False)
+if os.getenv("RBI_DISABLE_LLM") == "1":
+    os.environ["GROQ_API_KEY"] = ""
+
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from groq import APIError, APITimeoutError, Groq
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from starlette.concurrency import iterate_in_threadpool
 
+from .auth import (
+    auth_is_configured,
+    router as auth_router,
+    user_from_request,
+)
 from .reports import (
     REPORT_TYPES,
     analyze_evidence,
@@ -31,7 +42,8 @@ from .reports import (
     preview_html,
 )
 from .audit import read_audit_requests, record_audit_event
-from .retrieval import ROOT, retriever
+from .prompts import REGULAMIND_SYSTEM_PROMPT
+from .retrieval import retriever
 from .storage import (
     POLICY_DIR,
     REPORT_DIR,
@@ -44,10 +56,6 @@ from .storage import (
 )
 
 
-if os.getenv("RBI_DISABLE_LLM") == "1":
-    os.environ["GROQ_API_KEY"] = ""
-else:
-    load_dotenv(ROOT / ".env")
 WEB_DIR = (ROOT / "frontend").resolve()
 if not WEB_DIR.is_dir():
     WEB_DIR = (Path(__file__).resolve().parent / "web").resolve()
@@ -68,7 +76,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="RBI Regulatory Intelligence",
+    title="RegulaMind AI",
     version="1.0.0",
     description="Evidence-grounded RBI regulatory Q&A and report generation.",
     lifespan=lifespan,
@@ -77,11 +85,84 @@ app = FastAPI(
 # CORS configuration for frontend separation
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this based on your deployment
+    allow_origins=[
+        origin.strip()
+        for origin in os.getenv(
+            "RBI_CORS_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173",
+        ).split(",")
+        if origin.strip()
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(auth_router)
+
+
+@app.middleware("http")
+async def authenticate_api(request: Request, call_next):
+    path = request.url.path
+    origin = request.headers.get("origin")
+    allowed_origins = {
+        value.strip()
+        for value in os.getenv(
+            "RBI_CORS_ORIGINS",
+            "http://127.0.0.1:5173,http://localhost:5173",
+        ).split(",")
+        if value.strip()
+    }
+    same_origin = str(request.base_url).rstrip("/")
+    if (
+        request.method not in {"GET", "HEAD", "OPTIONS"}
+        and origin
+        and origin.rstrip("/") not in allowed_origins | {same_origin}
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Request origin is not allowed."},
+        )
+    public_paths = {
+        "/api/health",
+        "/api/auth/register",
+        "/api/auth/login",
+        "/api/auth/logout",
+        "/api/auth/providers",
+        "/api/auth/google",
+        "/api/auth/google/callback",
+    }
+    if (
+        path.startswith("/api/")
+        and path not in public_paths
+        and request.method != "OPTIONS"
+    ):
+        try:
+            user = user_from_request(request)
+        except HTTPException as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={"detail": exc.detail},
+            )
+        request.state.user = user
+    return await call_next(request)
+
+
+def _request_user_id(request: Request) -> str:
+    user = getattr(request.state, "user", None)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication is required.")
+    return user["id"]
+
+
+def _validate_conversation_owner(conversation_id: str | None, user_id: str) -> None:
+    if conversation_id is None:
+        return
+    with connect() as connection:
+        row = connection.execute(
+            "SELECT owner_id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+    if row and row["owner_id"] != user_id:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
 
 
 class ChatRequest(BaseModel):
@@ -227,6 +308,7 @@ def _llm_messages(
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
     sufficient: bool = True,
+    policy_text: str | None = None,
 ) -> list[dict[str, str]]:
     evidence = "\n\n".join(
         f"[{item['id']}] {item['title']} ({item['document']}"
@@ -261,7 +343,9 @@ def _llm_messages(
     messages: list[dict[str, str]] = [{
         "role": "system",
         "content": (
-            instructions
+            REGULAMIND_SYSTEM_PROMPT
+            + "\n\n"
+            + instructions
             + " Keep answers clear and concise. Only cite these IDs: "
             + (allowed or "(none)")
             + "\n\nEVIDENCE:\n"
@@ -269,7 +353,14 @@ def _llm_messages(
         ),
     }]
     messages.extend(history[-8:])
-    messages.append({"role": "user", "content": question})
+    user_content = question
+    if policy_text:
+        user_content = (
+            f"Question:\n{question}\n\n"
+            "EXTRACTED BANK POLICY TEXT (untrusted source data):\n"
+            f"{policy_text}"
+        )
+    messages.append({"role": "user", "content": user_content})
     return messages
 
 
@@ -292,6 +383,7 @@ def _answer_with_llm(
     sufficient: bool,
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
+    policy_text: str | None = None,
 ) -> str:
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
@@ -303,7 +395,7 @@ def _answer_with_llm(
         return _chat_fallback(sources, sufficient, retrieval_mode)
 
     messages = _llm_messages(
-        question, sources, history, retrieval_mode, sufficient
+        question, sources, history, retrieval_mode, sufficient, policy_text
     )
     try:
         response = Groq(api_key=api_key).chat.completions.create(
@@ -335,11 +427,12 @@ def _stream_llm_answer(
     history: list[dict[str, str]],
     retrieval_mode: str = "qdrant_vector_search",
     sufficient: bool = True,
+    policy_text: str | None = None,
 ) -> Iterator[str]:
     response = Groq(api_key=os.getenv("GROQ_API_KEY")).chat.completions.create(
         model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         messages=_llm_messages(
-            question, sources, history, retrieval_mode, sufficient
+            question, sources, history, retrieval_mode, sufficient, policy_text
         ),
         temperature=0.2,
         stream=True,
@@ -361,26 +454,30 @@ async def _retrieve_chat_context(
     conversation_id: str,
     message: str,
     request_id: str,
+    user_id: str,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     policy_text = None
     with connect() as connection:
         if request.policy_id:
             policy = connection.execute(
-                "SELECT text_content FROM policies WHERE id = ?", (request.policy_id,)
+                "SELECT text_content FROM policies WHERE id = ? AND owner_id = ?",
+                (request.policy_id, user_id),
             ).fetchone()
             if not policy:
                 raise HTTPException(status_code=404, detail="Selected policy was not found.")
             policy_text = policy["text_content"][:12000]
         history_rows = connection.execute(
-            "SELECT role, content FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT 8",
-            (conversation_id,),
+            "SELECT m.role, m.content FROM messages m "
+            "JOIN conversations c ON c.id = m.conversation_id "
+            "WHERE m.conversation_id = ? AND c.owner_id = ? ORDER BY m.id DESC LIMIT 8",
+            (conversation_id, user_id),
         ).fetchall()
         history = [
             {"role": row["role"], "content": row["content"]}
             for row in reversed(history_rows)
             if row["role"] in {"user", "assistant"}
         ]
-        add_message(connection, conversation_id, "user", message)
+        add_message(connection, conversation_id, "user", message, user_id)
 
     plan_context = (
         f"{message}\n\nBank policy context:\n{policy_text}"
@@ -391,13 +488,20 @@ async def _retrieve_chat_context(
     query_source = "original_question"
     search_purpose = "Retrieve RBI evidence relevant to the original question."
     planned_searches = [{"query": plan_context, "purpose": search_purpose}]
+    audit_searches = [
+        {
+            **search,
+            "query": message if policy_text is not None else search["query"],
+        }
+        for search in planned_searches
+    ]
     record_audit_event(
         request_id,
         "retrieval_plan_generated",
         retrieval_mode=retrieval_mode,
         query_source=query_source,
         reason="Use the complete original question as the retrieval query.",
-        searches=planned_searches,
+        searches=audit_searches,
         planned_search_count=len(planned_searches),
     )
 
@@ -409,12 +513,13 @@ async def _retrieve_chat_context(
     failed_searches = 0
     for operation, search in enumerate(planned_searches, start=1):
         started_at = time.perf_counter()
+        audit_query = message if policy_text is not None else search["query"]
         collection = retriever.status.get("collection")
         record_audit_event(
             request_id,
             "retrieval_search_started",
             search_operation=operation,
-            query=search["query"],
+            query=audit_query,
             purpose=search["purpose"],
             collection=collection,
             query_source=query_source,
@@ -432,7 +537,7 @@ async def _retrieve_chat_context(
                 request_id,
                 "retrieval_search_failed",
                 search_operation=operation,
-                query=search["query"],
+                query=audit_query,
                 purpose=search["purpose"],
                 collection=collection,
                 query_source=query_source,
@@ -450,7 +555,7 @@ async def _retrieve_chat_context(
             request_id,
             "retrieval_search_completed",
             search_operation=operation,
-            query=search["query"],
+            query=audit_query,
             purpose=search["purpose"],
             collection=collection,
             query_source=query_source,
@@ -516,6 +621,7 @@ async def _retrieve_chat_context(
         "sources": combined_sources,
         "sufficient": sufficient,
         "retrieval_mode": retrieval_mode,
+        "policy_text": policy_text,
         "planned_queries": [search["query"] for search in planned_searches],
         "executed_search_count": attempted_searches,
         "request_id": request_id,
@@ -555,6 +661,7 @@ def _infer_report_type(message: str) -> str:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
+        "authentication_configured": auth_is_configured(),
         "retrieval": retriever.status,
         "llm_configured": bool(os.getenv("GROQ_API_KEY")),
         "llm_model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
@@ -565,11 +672,16 @@ async def health() -> dict[str, Any]:
 @app.get("/api/retrieval/logs")
 @app.get("/api/query-analyzer/logs", include_in_schema=False)
 async def retrieval_logs(
+    request: Request,
     request_id: str | None = Query(default=None, max_length=64),
     limit: int = Query(default=50, ge=1, le=100),
 ) -> dict[str, Any]:
     return {
-        "requests": read_audit_requests(limit=limit, request_id=request_id),
+        "requests": read_audit_requests(
+            limit=limit,
+            request_id=request_id,
+            user_id=_request_user_id(request),
+        ),
         "limit": limit,
     }
 
@@ -581,16 +693,20 @@ async def list_sources() -> dict[str, Any]:
 
 
 @app.get("/api/policies")
-async def list_policies() -> dict[str, Any]:
+async def list_policies(request: Request) -> dict[str, Any]:
+    user_id = _request_user_id(request)
     with connect() as connection:
         rows = connection.execute(
-            "SELECT id, filename, display_name, created_at FROM policies ORDER BY created_at DESC"
+            "SELECT id, filename, display_name, created_at FROM policies "
+            "WHERE owner_id = ? ORDER BY created_at DESC",
+            (user_id,),
         ).fetchall()
     return {"policies": [dict(row) for row in rows]}
 
 
 @app.post("/api/policies")
-async def upload_policy(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_policy(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    user_id = _request_user_id(request)
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".pdf", ".txt"}:
         raise HTTPException(status_code=415, detail="Upload a PDF or UTF-8 text policy.")
@@ -617,15 +733,18 @@ async def upload_policy(file: UploadFile = File(...)) -> dict[str, Any]:
     (POLICY_DIR / f"{policy_id}{suffix}").write_bytes(payload)
     with connect() as connection:
         connection.execute(
-            "INSERT INTO policies (id, filename, display_name, text_content, created_at) VALUES (?, ?, ?, ?, ?)",
-            (policy_id, f"{policy_id}{suffix}", safe_name, text, utc_now()),
+            "INSERT INTO policies (id, owner_id, filename, display_name, text_content, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (policy_id, user_id, f"{policy_id}{suffix}", safe_name, text, utc_now()),
         )
     return {"id": policy_id, "filename": safe_name, "characters": len(text)}
 
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest) -> dict[str, Any]:
+async def chat(request: ChatRequest, http_request: Request) -> dict[str, Any]:
+    user_id = _request_user_id(http_request)
     conversation_id = _valid_conversation(request.conversation_id)
+    _validate_conversation_owner(conversation_id, user_id)
     message = request.message.strip()
     request_id = str(uuid.uuid4())
     record_audit_event(
@@ -633,6 +752,7 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
         "request_received",
         question=message,
         endpoint="/api/chat",
+        user_id=user_id,
     )
     if REPORT_INTENT.search(message):
         hint = _report_hint(_infer_report_type(message), message)
@@ -642,8 +762,10 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
             status="completed",
         )
         with connect() as connection:
-            add_message(connection, conversation_id, "user", message)
-            assistant_id = add_message(connection, conversation_id, "assistant", hint["assistant"])
+            add_message(connection, conversation_id, "user", message, user_id)
+            assistant_id = add_message(
+                connection, conversation_id, "assistant", hint["assistant"], user_id
+            )
         return hint | {
             "conversation_id": conversation_id,
             "message_id": assistant_id,
@@ -651,7 +773,7 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
         }
 
     history, retrieved = await _retrieve_chat_context(
-        request, conversation_id, message, request_id
+        request, conversation_id, message, request_id, user_id
     )
     record_audit_event(
         request_id,
@@ -670,6 +792,7 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
             retrieved["sufficient"],
             history,
             retrieved["retrieval_mode"],
+            retrieved["policy_text"],
         )
     except Exception as exc:
         record_audit_event(
@@ -693,7 +816,8 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
     ]
     with connect() as connection:
         message_id = add_message(
-            connection, conversation_id, "assistant", answer, retrieved["sources"]
+            connection, conversation_id, "assistant", answer, user_id,
+            retrieved["sources"],
         )
     record_audit_event(
         request_id,
@@ -713,8 +837,10 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
 
 
 @app.post("/api/chat/stream")
-async def chat_stream(request: ChatRequest) -> StreamingResponse:
+async def chat_stream(request: ChatRequest, http_request: Request) -> StreamingResponse:
+    user_id = _request_user_id(http_request)
     conversation_id = _valid_conversation(request.conversation_id)
+    _validate_conversation_owner(conversation_id, user_id)
     message = request.message.strip()
     request_id = str(uuid.uuid4())
     record_audit_event(
@@ -722,6 +848,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         "request_received",
         question=message,
         endpoint="/api/chat/stream",
+        user_id=user_id,
     )
 
     if REPORT_INTENT.search(message):
@@ -732,9 +859,9 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
             status="completed",
         )
         with connect() as connection:
-            add_message(connection, conversation_id, "user", message)
+            add_message(connection, conversation_id, "user", message, user_id)
             assistant_id = add_message(
-                connection, conversation_id, "assistant", hint["assistant"]
+                connection, conversation_id, "assistant", hint["assistant"], user_id
             )
         final = hint | {
             "conversation_id": conversation_id,
@@ -752,7 +879,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
         )
 
     history, retrieved = await _retrieve_chat_context(
-        request, conversation_id, message, request_id
+        request, conversation_id, message, request_id, user_id
     )
 
     async def answer_events() -> AsyncIterator[str]:
@@ -775,6 +902,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                     history,
                     retrieved["retrieval_mode"],
                     retrieved["sufficient"],
+                    retrieved["policy_text"],
                 )
                 async for part in iterate_in_threadpool(answer_stream):
                     answer_parts.append(part)
@@ -840,6 +968,7 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
                 conversation_id,
                 "assistant",
                 answer,
+                user_id,
                 retrieved["sources"],
             )
         record_audit_event(
@@ -874,23 +1003,29 @@ async def chat_stream(request: ChatRequest) -> StreamingResponse:
 
 @app.get("/api/conversations")
 async def list_conversations(
-    q: str = Query(default="", max_length=120), limit: int = Query(default=30, ge=1, le=100)
+    request: Request,
+    q: str = Query(default="", max_length=120),
+    limit: int = Query(default=30, ge=1, le=100),
 ) -> dict[str, Any]:
+    user_id = _request_user_id(request)
     with connect() as connection:
         rows = connection.execute(
             "SELECT c.id, c.title, c.created_at, c.updated_at, "
             "(SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count "
-            "FROM conversations c WHERE c.title LIKE ? ORDER BY c.updated_at DESC LIMIT ?",
-            (f"%{q}%", limit),
+            "FROM conversations c WHERE c.owner_id = ? AND c.title LIKE ? "
+            "ORDER BY c.updated_at DESC LIMIT ?",
+            (user_id, f"%{q}%", limit),
         ).fetchall()
     return {"conversations": [dict(row) for row in rows]}
 
 
 @app.get("/api/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str) -> dict[str, Any]:
+async def get_conversation(conversation_id: str, request: Request) -> dict[str, Any]:
+    user_id = _request_user_id(request)
     with connect() as connection:
         conversation = connection.execute(
-            "SELECT * FROM conversations WHERE id = ?", (conversation_id,)
+            "SELECT * FROM conversations WHERE id = ? AND owner_id = ?",
+            (conversation_id, user_id),
         ).fetchone()
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found.")
@@ -923,17 +1058,20 @@ async def get_conversation(conversation_id: str) -> dict[str, Any]:
 
 
 @app.delete("/api/conversations/{conversation_id}")
-async def delete_conversation(conversation_id: str) -> dict[str, str]:
+async def delete_conversation(conversation_id: str, request: Request) -> dict[str, str]:
+    user_id = _request_user_id(request)
     with connect() as connection:
         exists = connection.execute(
-            "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+            "SELECT 1 FROM conversations WHERE id = ? AND owner_id = ?",
+            (conversation_id, user_id),
         ).fetchone()
         if not exists:
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
         connection.execute(
-            "UPDATE reports SET conversation_id = NULL WHERE conversation_id = ?",
-            (conversation_id,),
+            "UPDATE reports SET conversation_id = NULL "
+            "WHERE conversation_id = ? AND owner_id = ?",
+            (conversation_id, user_id),
         )
         connection.execute(
             "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
@@ -945,10 +1083,16 @@ async def delete_conversation(conversation_id: str) -> dict[str, str]:
 
 
 @app.post("/api/messages/{message_id}/feedback")
-async def save_feedback(message_id: int, request: FeedbackRequest) -> dict[str, str]:
+async def save_feedback(
+    message_id: int, request: FeedbackRequest, http_request: Request
+) -> dict[str, str]:
+    user_id = _request_user_id(http_request)
     with connect() as connection:
         exists = connection.execute(
-            "SELECT 1 FROM messages WHERE id = ? AND role = 'assistant'", (message_id,)
+            "SELECT 1 FROM messages m JOIN conversations c "
+            "ON c.id = m.conversation_id WHERE m.id = ? "
+            "AND m.role = 'assistant' AND c.owner_id = ?",
+            (message_id, user_id),
         ).fetchone()
         if not exists:
             raise HTTPException(status_code=404, detail="Assistant message not found.")
@@ -1000,8 +1144,9 @@ def run_report_job(report_id: str) -> None:
         if request.get("policy_id"):
             with connect() as connection:
                 policy = connection.execute(
-                    "SELECT display_name, text_content FROM policies WHERE id = ?",
-                    (request["policy_id"],),
+                    "SELECT display_name, text_content FROM policies "
+                    "WHERE id = ? AND owner_id = ?",
+                    (request["policy_id"], row["owner_id"]),
                 ).fetchone()
             if not policy:
                 raise RuntimeError("The selected bank policy is no longer available.")
@@ -1056,6 +1201,7 @@ def run_report_job(report_id: str) -> None:
                     row["conversation_id"],
                     "assistant",
                     f"Report ready: {title}",
+                    row["owner_id"],
                     retrieved["sources"],
                     report_id,
                 )
@@ -1069,7 +1215,12 @@ def awaitable_analyze(**kwargs: Any) -> dict[str, Any]:
 
 
 @app.post("/api/reports", status_code=202)
-async def create_report(request: ReportRequest, background_tasks: BackgroundTasks) -> dict[str, Any]:
+async def create_report(
+    request: ReportRequest,
+    background_tasks: BackgroundTasks,
+    http_request: Request,
+) -> dict[str, Any]:
+    user_id = _request_user_id(http_request)
     _require_retriever()
     if request.report_type not in REPORT_TYPES:
         raise HTTPException(status_code=422, detail="Unsupported report type.")
@@ -1080,6 +1231,7 @@ async def create_report(request: ReportRequest, background_tasks: BackgroundTask
     if request.report_type == "regulation_comparison" and len(set(request.source_files)) < 2:
         raise HTTPException(status_code=422, detail="Select at least two RBI documents or versions to compare.")
     conversation_id = _valid_conversation(request.conversation_id) if request.conversation_id else None
+    _validate_conversation_owner(conversation_id, user_id)
 
     available = {item["filename"] for item in retriever.sources()}
     unknown_sources = set(request.source_files) - available
@@ -1087,7 +1239,10 @@ async def create_report(request: ReportRequest, background_tasks: BackgroundTask
         raise HTTPException(status_code=422, detail="One or more selected RBI documents are unavailable.")
     if request.policy_id:
         with connect() as connection:
-            found = connection.execute("SELECT 1 FROM policies WHERE id = ?", (request.policy_id,)).fetchone()
+            found = connection.execute(
+                "SELECT 1 FROM policies WHERE id = ? AND owner_id = ?",
+                (request.policy_id, user_id),
+            ).fetchone()
         if not found:
             raise HTTPException(status_code=404, detail="Selected bank policy was not found.")
 
@@ -1095,24 +1250,29 @@ async def create_report(request: ReportRequest, background_tasks: BackgroundTask
     title = request.title or REPORT_TYPES[request.report_type]
     now = utc_now()
     with connect() as connection:
+        if conversation_id:
+            add_message(
+                connection,
+                conversation_id,
+                "user",
+                f"Generate {REPORT_TYPES[request.report_type]}: {request.query}",
+                user_id,
+            )
         connection.execute(
-            "INSERT INTO reports (id, conversation_id, title, report_type, status, output_format, "
-            "source_docs_json, policy_id, request_json, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, 'queued', ?, '[]', ?, ?, ?, ?)",
+            "INSERT INTO reports (id, owner_id, conversation_id, title, report_type, status, "
+            "output_format, source_docs_json, policy_id, request_json, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, 'queued', ?, '[]', ?, ?, ?, ?)",
             (
-                report_id, conversation_id, title, request.report_type,
+                report_id, user_id, conversation_id, title, request.report_type,
                 request.output_format, request.policy_id,
                 json.dumps(request.model_dump()), now, now,
             ),
         )
         if conversation_id:
             add_message(
-                connection, conversation_id, "user",
-                f"Generate {REPORT_TYPES[request.report_type]}: {request.query}",
-            )
-            add_message(
                 connection, conversation_id, "assistant",
                 f"Preparing your {REPORT_TYPES[request.report_type].lower()}.",
+                user_id,
                 report_id=report_id,
             )
     background_tasks.add_task(run_report_job, report_id)
@@ -1121,13 +1281,15 @@ async def create_report(request: ReportRequest, background_tasks: BackgroundTask
 
 @app.get("/api/reports")
 async def list_reports(
+    request: Request,
     q: str = Query(default="", max_length=120),
     report_type: str | None = None,
     status: str | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    clauses, values = ["title LIKE ?"], [f"%{q}%"]
+    user_id = _request_user_id(request)
+    clauses, values = ["owner_id = ?", "title LIKE ?"], [user_id, f"%{q}%"]
     if report_type:
         clauses.append("report_type = ?")
         values.append(report_type)
@@ -1144,26 +1306,29 @@ async def list_reports(
     return {"reports": [serialize_report(row) for row in rows], "total": total, "offset": offset, "limit": limit}
 
 
-def _load_report(report_id: str):
+def _load_report(report_id: str, user_id: str):
     try:
         uuid.UUID(report_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Report not found.") from exc
     with connect() as connection:
-        row = connection.execute("SELECT * FROM reports WHERE id = ?", (report_id,)).fetchone()
+        row = connection.execute(
+            "SELECT * FROM reports WHERE id = ? AND owner_id = ?",
+            (report_id, user_id),
+        ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Report not found.")
     return row
 
 
 @app.get("/api/reports/{report_id}")
-async def get_report(report_id: str) -> dict[str, Any]:
-    return {"report": serialize_report(_load_report(report_id))}
+async def get_report(report_id: str, request: Request) -> dict[str, Any]:
+    return {"report": serialize_report(_load_report(report_id, _request_user_id(request)))}
 
 
 @app.get("/api/reports/{report_id}/preview", response_class=HTMLResponse)
-async def preview_report(report_id: str) -> str:
-    row = _load_report(report_id)
+async def preview_report(report_id: str, request: Request) -> str:
+    row = _load_report(report_id, _request_user_id(request))
     if row["status"] != "ready" or not row["result_json"]:
         raise HTTPException(status_code=409, detail="Report preview is available when generation is complete.")
     html = preview_html(json.loads(row["result_json"]))
@@ -1176,8 +1341,8 @@ async def preview_report(report_id: str) -> str:
 
 
 @app.get("/api/reports/{report_id}/file")
-async def download_report(report_id: str) -> FileResponse:
-    row = _load_report(report_id)
+async def download_report(report_id: str, request: Request) -> FileResponse:
+    row = _load_report(report_id, _request_user_id(request))
     if row["status"] != "ready" or not row["file_path"]:
         raise HTTPException(status_code=409, detail="Report file is not ready yet.")
     safe_name = f"{report_id}.{row['output_format']}"
@@ -1189,11 +1354,13 @@ async def download_report(report_id: str) -> FileResponse:
 
 
 @app.post("/api/reports/{report_id}/regenerate", status_code=202)
-async def regenerate_report(report_id: str, background_tasks: BackgroundTasks) -> dict[str, Any]:
-    previous = _load_report(report_id)
+async def regenerate_report(
+    report_id: str, background_tasks: BackgroundTasks, http_request: Request
+) -> dict[str, Any]:
+    previous = _load_report(report_id, _request_user_id(http_request))
     request = ReportRequest.model_validate(json_load(previous["request_json"], {}))
     request.conversation_id = previous["conversation_id"]
-    return await create_report(request, background_tasks)
+    return await create_report(request, background_tasks, http_request)
 
 
 @app.get("/api/settings")

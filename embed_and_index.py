@@ -17,7 +17,7 @@ from retrieve import ensure_source_filter_index
 # --------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-CHUNKS_FILE = PROJECT_ROOT / "data" / "rbi_text" / "rbi_008_chunks.json"
+CHUNKS_FILE = PROJECT_ROOT / "data" / "rbi_text" / "rbi_024_chunks.json"
 
 COLLECTION_NAME = os.getenv(
     "QDRANT_COLLECTION", "rbi_regulations"

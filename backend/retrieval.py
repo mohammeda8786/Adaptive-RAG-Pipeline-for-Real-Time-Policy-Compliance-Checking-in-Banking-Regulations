@@ -22,7 +22,7 @@ PAGE_MARKER = re.compile(
     r"(?m)^[ \t]*---[ \t]*Page[ \t]+(\d+)[ \t]*---[ \t]*(?:\r?\n|$)",
     re.IGNORECASE,
 )
-MIN_RELEVANCE = 0.55
+MIN_RELEVANCE = 0.50
 
 
 def _display_page_reference(value: Any) -> str:

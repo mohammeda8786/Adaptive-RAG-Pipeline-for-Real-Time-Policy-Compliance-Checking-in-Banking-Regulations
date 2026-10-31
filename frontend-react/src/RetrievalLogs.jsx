@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+  || `http://${window.location.hostname || '127.0.0.1'}:8000`
 
 function displayDate(value) {
   if (!value) return 'Timestamp unavailable'
@@ -19,7 +20,13 @@ function RetrievalLogs() {
     setLoading(true)
     setError('')
     try {
-      const response = await fetch(`${API_BASE}/api/retrieval/logs?limit=50`)
+      const response = await fetch(`${API_BASE}/api/retrieval/logs?limit=50`, {
+        credentials: 'include',
+      })
+      if (response.status === 401) {
+        window.location.replace('/login')
+        return
+      }
       if (!response.ok) {
         throw new Error(`Could not load audit logs (HTTP ${response.status}).`)
       }

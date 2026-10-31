@@ -133,7 +133,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .message-bubble a { color: var(--blue); text-decoration: underline; text-underline-offset: 2px; }
 .message-bubble .answer-citation { display: inline-flex; align-items: center; justify-content: center; padding: 0 0.3em; border: 0; border-radius: 4px; background: #edf5fb; color: var(--blue); font-weight: 700; font-family: 'IBM Plex Mono', monospace; cursor: pointer; }
 .message-bubble .answer-citation:hover { background: #dfeef9; }
-.evidence-warning { width: 100%; max-width: 768px; border: 1px solid #f2d5a3; background: var(--amber-wash); color: #7e5b12; border-radius: 12px; padding: 10px 14px; font-size: 12px; line-height: 1.5; }
 .source-section { width: 100%; max-width: 768px; border: 1px solid var(--line); background: white; border-radius: 12px; overflow: hidden; }
 .source-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; padding: 12px 14px; color: var(--navy); font-weight: 600; font-size: 12px; background: #f7fafd; }
 .source-summary::-webkit-details-marker { display: none; }
@@ -142,6 +141,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .source-note { margin: 0; padding: 12px 14px 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .source-card { display: grid; gap: 10px; padding: 14px 14px 12px; border-top: 1px solid var(--line); }
 .source-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.source-score { margin-left: auto; padding: 3px 8px; border-radius: 999px; background: var(--mint); color: #236d63; font-family: 'IBM Plex Mono', monospace; font-size: 10px; white-space: nowrap; }
+.source-score.low-confidence { background: var(--amber-wash); color: var(--amber); }
 .source-id { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 23px; padding: 0 7px; border-radius: 6px; background: var(--blue-wash); color: var(--navy); font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 700; }
 .source-title { color: var(--navy-2); font-size: 13px; font-weight: 600; }
 .source-ref { display: flex; flex-wrap: wrap; gap: 8px 10px; color: var(--muted); font-size: 11px; }
@@ -188,7 +189,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .topbar-context { font-size: 11px; }
   .conversation-scroll { padding: 20px 12px 0; }
   .welcome-state h1 { font-size: 30px; }
-  .message-list, .source-section, .evidence-warning { max-width: 100%; margin-left: 0; }
+  .message-list, .source-section { max-width: 100%; margin-left: 0; }
   .message, .message.user { grid-template-columns: minmax(0, 1fr); }
   .message.assistant > :not(.assistant-mark), .message.user .message-bubble { grid-column: 1; }
   .message.user .message-bubble { max-width: 88%; }
@@ -253,9 +254,54 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .query-log-timeline li { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 10px; }
 .query-log-timeline code { color: var(--navy); }
 
+.topbar-auth-link { padding: 6px 11px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--navy); background: white; font-size: 11px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+.topbar-auth-link:hover { border-color: #a9bfce; background: #f7fafc; }
+.auth-page { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; padding: 24px clamp(20px, 6vw, 88px); background: radial-gradient(ellipse at 50% 22%, #fff 0, #f6f8fa 66%); }
+.auth-header { display: flex; align-items: center; justify-content: space-between; width: 100%; max-width: 1180px; margin: 0 auto; }
+.auth-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; }
+.auth-brand img { width: 42px; height: 42px; border: 1px solid #dbe3e9; border-radius: 10px; object-fit: cover; background: white; }
+.auth-brand span { display: grid; gap: 2px; }
+.auth-brand strong { font-size: 13px; }
+.auth-brand small { color: var(--muted); font: 9px 'IBM Plex Mono', monospace; letter-spacing: .07em; }
+.auth-switch a:hover { text-decoration: underline; }
+.auth-card { align-self: center; width: min(100%, 440px); margin: 32px auto 70px; padding: clamp(24px, 5vw, 40px); border: 1px solid var(--line); border-radius: 14px; background: rgba(255,255,255,.94); box-shadow: 0 18px 55px rgba(19, 41, 64, .08); animation: reveal .35s ease-out both; }
+.auth-eyebrow { display: flex; align-items: center; gap: 9px; color: var(--muted); font: 9px 'IBM Plex Mono', monospace; letter-spacing: .07em; }
+.auth-card h1 { margin: 16px 0 7px; color: var(--navy-2); font-size: 27px; line-height: 1.2; font-weight: 600; }
+.auth-intro { color: #6d7b89; font-size: 12px; line-height: 1.6; }
+.auth-google { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 43px; margin-top: 20px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: #33475b; font-size: 12px; font-weight: 600; text-decoration: none; }
+.auth-google:hover { border-color: #a9bfce; background: #fbfdfe; }
+.auth-google:disabled { color: #687789; background: #f7f8f9; cursor: not-allowed; }
+.auth-google svg { width: 17px; height: 17px; stroke: none; }
+.auth-divider { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: #8a96a3; font-size: 10px; }
+.auth-divider::before, .auth-divider::after { height: 1px; flex: 1; background: var(--line); content: ''; }
+.auth-provider-note { margin: 8px 0 0; color: var(--muted); text-align: center; font-size: 10px; }
+.auth-form { display: grid; gap: 15px; margin-top: 22px; }
+.auth-field { display: grid; gap: 6px; color: #42566b; font-size: 11px; font-weight: 600; }
+.auth-field input { width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 7px; background: white; color: var(--ink); font-size: 12px; font-weight: 400; }
+.auth-field input::placeholder { color: #9aa6b2; }
+.auth-field input:focus { border-color: #6c9bb8; }
+.auth-submit { min-height: 43px; margin-top: 3px; border: 1px solid var(--navy-2); border-radius: 7px; background: var(--navy-2); color: white; font-size: 12px; font-weight: 600; }
+.auth-submit:hover { background: var(--navy); }
+.auth-submit:disabled { opacity: .65; cursor: wait; }
+.auth-submit-notice { padding: 9px 11px; border: 1px solid #f0d0cd; border-radius: 7px; background: #fff3f2; color: #873e39; font-size: 11px; line-height: 1.5; }
+.auth-switch { margin-top: 20px; color: #6d7b89; text-align: center; font-size: 11px; }
+.auth-switch a { color: var(--navy); font-weight: 600; text-decoration: none; }
+.auth-disclaimer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); color: #8a96a3; text-align: center; font-size: 9px; line-height: 1.5; }
+.account-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 4px 12px; border-bottom: 1px solid #dfe5e9; }
+.account-avatar { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%; background: var(--blue-wash); color: var(--navy); font-size: 11px; font-weight: 700; }
+.account-copy { display: grid; flex: 1; min-width: 0; gap: 1px; }
+.account-copy strong, .account-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-copy strong { color: var(--navy-2); font-size: 10px; }
+.account-copy small { color: var(--muted); font-size: 9px; }
+.account-signout { padding: 5px 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: white; color: var(--navy); font-size: 9px; white-space: nowrap; }
+.account-signout:hover { border-color: #a9bfce; background: #f7fafc; }
+
 @media (max-width: 768px) {
   .topbar-actions { gap: 7px; }
   .model-indicator { display: none; }
+  .topbar-auth-link { padding: 5px 8px; font-size: 10px; }
+  .auth-page { padding: 18px 16px; }
+  .auth-card { margin: 28px auto; }
   .query-log-toggle { padding: 0 7px; font-size: 10px; }
   .query-log-panel { width: 100vw; }
   .query-log-content { grid-template-columns: 1fr; grid-template-rows: minmax(120px, 28dvh) minmax(0, 1fr); }

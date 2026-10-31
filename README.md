@@ -1,10 +1,12 @@
-# RBI Regulatory Intelligence
+# RegulaMind AI
 
-A single-origin FastAPI application with a focused chat UI for evidence-grounded RBI questions and saved recent conversations. The backend also exposes report-generation APIs, but report, compliance, and settings screens are intentionally not part of the current UI. Chat answers and report jobs share one retrieval service over the configured Qdrant collection.
+RegulaMind AI is a single-origin FastAPI application with a focused chat UI for evidence-grounded RBI questions and saved recent conversations. The backend also exposes report-generation APIs, but report, compliance, and settings screens are intentionally not part of the current UI. Chat answers and report jobs share one retrieval service over the configured Qdrant collection.
+
+Accounts use server-issued JWTs in an HTTP-only cookie. Registration and login require `JWT_SECRET_KEY`; conversations, uploaded policies, and reports are scoped to the signed-in account. Records created before account ownership was added remain unassigned and are not visible to new accounts.
 
 ## Retrieval and chat integration
 
-The non-React chat UI posts each question to `/api/chat`; the React chat UI posts to `/api/chat/stream`. Both endpoints retrieve evidence directly from the complete original question, without invoking the Query Analyzer. Each request makes one Qdrant `query_points` request using the existing embedding model and takes the top five results, as the standalone retrieval script does. If a bank policy is selected, its text is added as retrieval context. Retrieved passages are used for evidence-grounded answer generation. Chat answers cite matched regulation sections, clauses, and page references. Page references are resolved from each indexed passage's source-text offsets and the original extracted text's page markers, including for older index entries that omitted page metadata. If source text or reliable offsets are unavailable, the UI leaves the page unstated rather than guessing. On startup, the API ensures a Qdrant keyword index exists for `source_file`, which enables report retrieval filtered by selected documents. Evidence with a top similarity score below `0.55` is flagged for review in chat. Report retrieval continues using its existing filtered candidate/reranking path.
+The non-React chat UI posts each question to `/api/chat`; the React chat UI posts to `/api/chat/stream`. Both endpoints retrieve evidence directly from the complete original question, without invoking the Query Analyzer. Each request makes one Qdrant `query_points` request using the existing embedding model and takes the top five results, as the standalone retrieval script does. If a bank policy is selected, its text is added as retrieval context. Retrieved passages are used for evidence-grounded answer generation. Chat answers cite matched regulation sections, clauses, and page references. Page references are resolved from each indexed passage's source-text offsets and the original extracted text's page markers, including for older index entries that omitted page metadata. If source text or reliable offsets are unavailable, the UI leaves the page unstated rather than guessing. Each retrieved passage displays its similarity score; scores below `0.50` are labeled low confidence. Evidence with a top similarity score below `0.50` is treated as insufficient for a reliable answer in chat. Report retrieval continues using its existing filtered candidate/reranking path.
 
 `queryanalyser.py` and `queryanalyser_retrival.py` remain available for standalone adaptive retrieval experiments, but neither is imported by the chat API. The unused chat adapter has been removed. New chat traces record the original-question retrieval plan and actual Qdrant execution counts.
 
@@ -21,9 +23,11 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Set `QDRANT_URL`, `QDRANT_API_KEY`, and `GROQ_API_KEY` in `.env` on the server only. Never add API keys to browser code or client-side environment variables. If a key has been exposed, revoke it and enter a replacement directly in `.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
+Set `QDRANT_URL`, `QDRANT_API_KEY`, `GROQ_API_KEY`, and `JWT_SECRET_KEY` in `.env` on the server only. Generate a unique JWT signing key, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then paste its output as the value of `JWT_SECRET_KEY`. Do not use an issued login token as the signing key, and never add secrets to browser code or client-side environment variables. Set `JWT_COOKIE_SECURE=1` when serving over HTTPS and update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. If a key has been exposed, revoke it and enter a replacement directly in `.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
 
-To split and index every `data/rbi_text/rbi_00*.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `.env` and run:
+Google sign-in is optional. In Google Cloud Console, create a Web OAuth client, add `http://127.0.0.1:8000/api/auth/google/callback` as an authorized redirect URI for local development, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `RBI_FRONTEND_URL` in the server-side `.env`. For deployment, use HTTPS callback/frontend URLs and register the exact callback URI with Google. The backend verifies the profile through Google's HTTPS OpenID Connect userinfo endpoint, requires a verified email, and links an existing account with the same verified email. Never put the Google client secret in Vite environment variables.
+
+To split and index every numbered `data/rbi_text/rbi_<number>.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `.env` and run:
 
 ```powershell
 python ingest_rbi_texts.py
@@ -40,6 +44,14 @@ The command regenerates a validated chunks JSON and progress file for each sourc
 | `QDRANT_COLLECTION` | `rbi_regulations` | Collection populated by the RBI indexing pipeline. |
 | `GROQ_API_KEY` | unset | Enables grounded chat and structured report analysis. |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model. |
+| `JWT_SECRET_KEY` | unset | Server-only signing key for JWT cookies; use a unique random value of at least 32 bytes. |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT session length (5–1440 minutes). |
+| `JWT_COOKIE_SECURE` | `0` | Set to `1` to require HTTPS for the authentication cookie. |
+| `GOOGLE_CLIENT_ID` | unset | Optional server-side Google OAuth web client ID. |
+| `GOOGLE_CLIENT_SECRET` | unset | Optional server-side Google OAuth client secret. |
+| `GOOGLE_REDIRECT_URI` | unset | Exact registered OAuth callback URL, ending in `/api/auth/google/callback`. |
+| `RBI_FRONTEND_URL` | `http://127.0.0.1:5173` | Frontend origin to return to after Google sign-in. |
+| `RBI_CORS_ORIGINS` | Local Vite origins | Comma-separated exact frontend origins allowed to send authenticated API requests. |
 | `RBI_DATA_DIR` | `data` | Root for local SQLite storage and generated files. |
 | `RBI_DATABASE_PATH` | `data/rbi_chat.sqlite3` | Conversations, uploaded policies, report jobs, and metadata. |
 | `RBI_REPORT_DIR` | `data/reports` | Generated PDF/CSV files. |
@@ -51,7 +63,7 @@ The first startup may download the embedding model if it is not cached. Keep the
 ## Run
 
 ```powershell
-python -m uvicorn rbi_chat.api:app --host 127.0.0.1 --port 8000
+python -m uvicorn backend.api:app --host 127.0.0.1 --port 8000
 ```
 
 Open <http://127.0.0.1:8000>. The FastAPI service and UI share the same origin. To export policy text again, run `python extract_policy_text.py` before starting the application.
@@ -61,6 +73,12 @@ Open <http://127.0.0.1:8000>. The FastAPI service and UI share the same origin. 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/health` | Retrieval readiness and configured provider status. |
+| `POST` | `/api/auth/register` | Create an account and issue an HTTP-only JWT cookie. |
+| `POST` | `/api/auth/login` | Verify credentials and issue an HTTP-only JWT cookie. |
+| `GET` | `/api/auth/google` | Begin Google OAuth sign-in. |
+| `GET` | `/api/auth/google/callback` | Verify the Google response and issue the HTTP-only JWT cookie. |
+| `GET` | `/api/auth/me` | Return the signed-in account. |
+| `POST` | `/api/auth/logout` | Clear the authentication cookie. |
 | `GET` | `/api/retrieval/logs?limit=50` | Recent retrieval and answer audit traces; optionally filter with `request_id`. |
 | `GET` | `/api/sources` | Indexed RBI documents. |
 | `POST` | `/api/chat` | Grounded chat; accepts `conversation_id`, `message`, and optional `policy_id`. |

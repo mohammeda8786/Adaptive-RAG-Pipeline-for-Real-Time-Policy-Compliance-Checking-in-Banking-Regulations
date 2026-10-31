@@ -137,6 +137,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .source-note { margin: 5px 0 9px; color: #718096; font-size: 10px; line-height: 1.5; }
 .source-card { margin: 6px 0; padding: 11px 12px; border: 1px solid #e2e9ee; border-radius: 7px; background: white; }
 .source-card-head { display: flex; align-items: flex-start; gap: 8px; }
+.source-score { margin-left: auto; padding: 2px 6px; color: #236d63; background: #e6f4f0; border-radius: 999px; font: 9px 'IBM Plex Mono', monospace; white-space: nowrap; }
+.source-score.low-confidence { color: #946916; background: #fbf3df; }
 .source-id { display: grid; place-items: center; min-width: 24px; height: 20px; padding: 0 5px; color: #246d70; background: #e8f4f1; border-radius: 4px; font: 10px 'IBM Plex Mono', monospace; }
 .source-title { color: #27445d; font-size: 11px; font-weight: 700; line-height: 1.45; }
 .source-ref { display: flex; flex-wrap: wrap; gap: 3px 12px; margin: 5px 0 0 32px; color: #718096; font-size: 10px; line-height: 1.45; }
@@ -145,7 +147,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .source-excerpt { margin: 9px 0 0 32px; color: #5e6d7b; font-size: 11px; line-height: 1.55; }
 .source-card-highlight { animation: source-highlight 1.4s ease-out; }
 @keyframes source-highlight { 0%, 45% { border-color: #68a7a0; background: #eef8f5; box-shadow: 0 0 0 3px rgba(57, 163, 143, .12); } 100% { border-color: #e2e9ee; background: white; box-shadow: none; } }
-.evidence-warning { display: flex; gap: 8px; width: min(690px, 92%); margin-top: 10px; padding: 10px 12px; color: #785d25; border: 1px solid #efe2bf; border-radius: 7px; background: #fdf8ea; font-size: 11px; line-height: 1.5; }
 .loading-bubble { display: flex; align-items: center; gap: 10px; width: fit-content; padding: 13px 16px; color: #718094; border: 1px solid var(--line); border-radius: 9px; background: #fafbfc; font-size: 11px; }
 .typing-dots { display: flex; gap: 3px; }
 .typing-dots i { width: 4px; height: 4px; border-radius: 50%; background: #56808e; animation: pulse 1s ease-in-out infinite; }
@@ -326,7 +327,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
   .disclaimer { font-size: 8px; }
   .message-list { padding-bottom: 14px; }
   .message-bubble { max-width: 96%; padding: 11px 12px; font-size: 12px; }
-  .source-section, .evidence-warning { width: 96%; }
+  .source-section { width: 96%; }
   .source-card { padding: 9px; }
   .page-heading { align-items: flex-start; padding: 27px 17px 18px; }
   .page-heading h1 { font-size: 23px; }

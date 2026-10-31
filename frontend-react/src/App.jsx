@@ -4,7 +4,8 @@ import { marked } from 'marked'
 import RetrievalLogs from './RetrievalLogs'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE_URL
+  || `http://${window.location.hostname || '127.0.0.1'}:8000`
 
 function formatAnswer(value, sources = []) {
   const sourceIds = new Set(sources.map((source) => source.id))
@@ -64,6 +65,11 @@ function sourceCards(sources = []) {
       </summary>
       <p className="source-note">S1, S2, etc. are chat references for these retrieved passages, not RBI clause numbers. Check the excerpt and section details below.</p>
       {sources.map((source) => {
+        const score = Number(source.relevance)
+        const hasScore = source.relevance !== null
+          && source.relevance !== undefined
+          && Number.isFinite(score)
+        const lowConfidence = hasScore && score < 0.5
         const section = source.section
           ? `${source.chapter ? `${source.chapter}, ` : ''}Section ${source.section}`
           : source.chapter || source.reference
@@ -86,6 +92,11 @@ function sourceCards(sources = []) {
             <div className="source-card-head">
               <span className="source-id">{source.id}</span>
               <span className="source-title">{source.title || source.document}</span>
+              {hasScore && (
+                <span className={`source-score${lowConfidence ? ' low-confidence' : ''}`}>
+                  {lowConfidence ? 'Low confidence' : 'Similarity'} · {score.toFixed(4)}
+                </span>
+              )}
             </div>
             <div className="source-ref">
               {metadata.map(([label, value]) => (
@@ -106,10 +117,13 @@ function sourceCards(sources = []) {
 
 async function api(path, options = {}) {
   const fullUrl = API_BASE + path
-  const response = await fetch(fullUrl, options)
+  const response = await fetch(fullUrl, { credentials: 'include', ...options })
   const contentType = response.headers.get('content-type') || ''
   const body = contentType.includes('application/json') ? await response.json() : await response.text()
 
+  if (response.status === 401 && window.location.pathname !== '/login') {
+    window.location.replace('/login')
+  }
   if (!response.ok) {
     const message = typeof body === 'object'
       ? body.detail?.message || body.detail || body.message
@@ -128,6 +142,7 @@ function App() {
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState({ ready: false, state: 'Connecting...', error: null, point_count: 0 })
+  const [user, setUser] = useState(null)
   const scrollRef = useRef(null)
 
   const addToast = useCallback((message, isError = false) => {
@@ -231,10 +246,14 @@ function App() {
       const response = await fetch(`${API_BASE}/api/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ conversation_id: conversationId, message: text }),
       })
 
       if (!response.ok) {
+        if (response.status === 401) {
+          window.location.replace('/login')
+        }
         const contentType = response.headers.get('content-type') || ''
         const body = contentType.includes('application/json')
           ? await response.json()
@@ -327,9 +346,30 @@ function App() {
   }, [addToast, busy, conversationId, loadConversations])
 
   useEffect(() => {
-    loadStatus()
-    loadConversations()
+    let active = true
+    api('/api/auth/me')
+      .then(({ user: currentUser }) => {
+        if (!active) return
+        setUser(currentUser)
+        loadStatus()
+        loadConversations()
+      })
+      .catch(() => {
+        if (active && window.location.pathname !== '/login') {
+          window.location.replace('/login')
+        }
+      })
+    return () => { active = false }
   }, [loadConversations, loadStatus])
+
+  const signOut = useCallback(async () => {
+    try {
+      await api('/api/auth/logout', { method: 'POST' })
+      window.location.assign('/login')
+    } catch (error) {
+      addToast(error.message, true)
+    }
+  }, [addToast])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -399,10 +439,10 @@ function App() {
     <div className="app-shell">
       <aside className="sidebar" id="sidebar" aria-label="Main navigation">
         <div className="brand-row">
-          <img className="brand-mark" src="/rbi-logo.avif" alt="RBI Intelligence" />
+          <img className="brand-mark" src="/rbi-logo.avif" alt="RegulaMind AI" />
           <div className="brand-copy">
-            <strong>RBI intelligence</strong>
-            <small>REGULATORY DESK</small>
+            <strong>RegulaMind AI</strong>
+            <small>REGULATORY INTELLIGENCE</small>
           </div>
           <button className="icon-button sidebar-collapse" id="collapseSidebar" type="button" aria-label="Collapse sidebar" title="Collapse sidebar">
             <svg viewBox="0 0 24 24"><path d="M9 5 2 12l7 7M22 5v14" /></svg>
@@ -440,6 +480,13 @@ function App() {
         </div>
 
         <div className="sidebar-bottom">
+          {user && (
+            <div className="account-row">
+              <span className="account-avatar" aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>
+              <span className="account-copy"><strong>{user.name}</strong><small>{user.email}</small></span>
+              <button className="account-signout" type="button" onClick={signOut}>Sign out</button>
+            </div>
+          )}
           <div className="workspace-status">
             <span className={`status-dot${status.ready ? ' ready' : status.state === 'Index unavailable' ? ' error' : ''}`}></span>
             <span id="workspaceStatus">{status.ready ? `RBI index: ${status.point_count} sources` : status.state}</span>
@@ -460,6 +507,9 @@ function App() {
           <div className="topbar-actions">
             <span className="model-indicator"><i></i><span id="modelLabel">RBI sources</span></span>
             <RetrievalLogs />
+            {user
+              ? <button className="topbar-auth-link" type="button" onClick={signOut}>Log out</button>
+              : <a className="topbar-auth-link" href="/login">Sign in</a>}
           </div>
         </header>
 
@@ -467,7 +517,7 @@ function App() {
           <div className="conversation-scroll" ref={scrollRef}>
             {visibleMessages.length === 0 && (
               <div className="welcome-state" id="welcomeState">
-                <div className="welcome-eyebrow"><span className="eyebrow-rule"></span> RBI REGULATORY INTELLIGENCE</div>
+                <div className="welcome-eyebrow"><span className="eyebrow-rule"></span> REGULAMIND AI</div>
                 <h1>Understand the rule.<br /><span>See the evidence.</span></h1>
                 <p className="welcome-copy">Ask about a direction, obligation, or control. Answers are grounded in the RBI source text and cited by document and page.</p>
                 <div className="corpus-note"><span className="note-lock">◇</span><span>Answers cite the indexed corpus. Confirm applicability and effective dates against the official RBI publication.</span></div>
@@ -494,9 +544,6 @@ function App() {
                           <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></svg>
                         </button>
                       </div>
-                    )}
-                    {isAssistant && message.sufficient_evidence === false && (
-                      <div className="evidence-warning">The best-matching passages did not meet the confidence threshold. They may still be relevant, but treat them as leads for review rather than confirmed requirements.</div>
                     )}
                     {isAssistant && sourceCards(message.sources || [])}
                     {isAssistant && !message.streaming && (
@@ -537,7 +584,7 @@ function App() {
                   }
                 }}
                 placeholder="Ask about an RBI direction or compliance obligation…"
-                aria-label="Message RBI Regulatory Intelligence"
+                aria-label="Message RegulaMind AI"
               />
               <div className="composer-toolbar">
                 <div className="composer-right">
