@@ -16,7 +16,7 @@ from typing import Any, AsyncIterator, Iterator, Literal
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parents[1]
-load_dotenv(ROOT / ".env", override=False)
+load_dotenv(ROOT / "backend" / ".env", override=False)
 if os.getenv("RBI_DISABLE_LLM") == "1":
     os.environ["GROQ_API_KEY"] = ""
 

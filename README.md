@@ -20,14 +20,15 @@ Python 3.10+ is recommended. From the project root on Windows:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+Copy-Item backend\.env.example backend\.env
+Copy-Item frontend-react\.env.example frontend-react\.env
 ```
 
-Set `QDRANT_URL`, `QDRANT_API_KEY`, `GROQ_API_KEY`, and `JWT_SECRET_KEY` in `.env` on the server only. Generate a unique JWT signing key, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then paste its output as the value of `JWT_SECRET_KEY`. Do not use an issued login token as the signing key, and never add secrets to browser code or client-side environment variables. Set `JWT_COOKIE_SECURE=1` when serving over HTTPS and update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. If a key has been exposed, revoke it and enter a replacement directly in `.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
+Backend secrets and service settings belong in `backend\.env`. The React app's public settings belong in `frontend-react\.env`; only `VITE_` variables are exposed to browser code, so never put secrets there. Set `QDRANT_URL`, `QDRANT_API_KEY`, `GROQ_API_KEY`, and `JWT_SECRET_KEY` in the backend environment. Generate a unique JWT signing key, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then paste its output as the value of `JWT_SECRET_KEY`. Do not use an issued login token as the signing key. Set `JWT_COOKIE_SECURE=1` when serving over HTTPS and update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. If a key has been exposed, revoke it and enter a replacement directly in `backend\.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
 
-Google sign-in is optional. In Google Cloud Console, create a Web OAuth client, add `http://127.0.0.1:8000/api/auth/google/callback` as an authorized redirect URI for local development, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `RBI_FRONTEND_URL` in the server-side `.env`. For deployment, use HTTPS callback/frontend URLs and register the exact callback URI with Google. The backend verifies the profile through Google's HTTPS OpenID Connect userinfo endpoint, requires a verified email, and links an existing account with the same verified email. Never put the Google client secret in Vite environment variables.
+Google sign-in is optional. In Google Cloud Console, create a Web OAuth client, add `http://127.0.0.1:8000/api/auth/google/callback` as an authorized redirect URI for local development, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `RBI_FRONTEND_URL` in `backend\.env`. For deployment, use HTTPS callback/frontend URLs and register the exact callback URI with Google. The backend verifies the profile through Google's HTTPS OpenID Connect userinfo endpoint, requires a verified email, and links an existing account with the same verified email. Never put the Google client secret in the frontend environment file.
 
-To split and index every numbered `data/rbi_text/rbi_<number>.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `.env` and run:
+To split and index every numbered `data/rbi_text/rbi_<number>.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `backend\.env` and run:
 
 ```powershell
 python ingest_rbi_texts.py

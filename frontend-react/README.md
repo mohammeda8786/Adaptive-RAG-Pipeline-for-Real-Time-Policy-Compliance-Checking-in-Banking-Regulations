@@ -20,6 +20,12 @@ The retrieval logs endpoint is unauthenticated and the JSONL audit file includes
 
 Start and configure the FastAPI backend first, following the project-level [setup instructions](../README.md). The backend must be available at `http://localhost:8000` by default.
 
+The frontend's environment file is `frontend-react/.env`. Create it from this folder with `Copy-Item .env.example .env`. It contains only public Vite configuration; keep API keys and OAuth client secrets in `backend/.env`. To use a non-default backend URL, set `VITE_API_BASE_URL` in `frontend-react/.env`, for example:
+
+```dotenv
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
 In a second PowerShell window, from this folder:
 
 ```powershell
@@ -29,12 +35,7 @@ npm run dev
 
 Open the local URL printed by Vite, usually <http://localhost:5173>.
 
-The frontend defaults to `http://localhost:8000` for its API. To use a backend at a different URL, set `VITE_API_BASE_URL` before starting Vite, for example:
-
-```powershell
-$env:VITE_API_BASE_URL = "http://127.0.0.1:8000"
-npm run dev
-```
+The frontend defaults to the current hostname on port `8000` for its API. Restart Vite after changing its environment file.
 
 The FastAPI backend currently allows cross-origin requests for the development frontend. Review and restrict its CORS configuration before deploying the services.
 

@@ -243,7 +243,7 @@ def ensure_collection(client: QdrantClient, vector_size: int):
 # --------------------------------------------------
 
 def main(chunks_files: list[Path] | None = None):
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(PROJECT_ROOT / "backend" / ".env", override=False)
 
     input_files = [CHUNKS_FILE] if chunks_files is None else chunks_files
     if not input_files:

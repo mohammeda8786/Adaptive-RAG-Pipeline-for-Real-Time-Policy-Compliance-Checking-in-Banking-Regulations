@@ -14,7 +14,7 @@ TEXT_DIR = PROJECT_ROOT / "data" / "rbi_text"
 
 
 def main() -> None:
-    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    load_dotenv(PROJECT_ROOT / "backend" / ".env", override=False)
 
     source_files = sorted(
         path

@@ -12,7 +12,7 @@ from sentence_transformers import SentenceTransformer, CrossEncoder
 # --------------------------------------------------
 
 PROJECT_DIR = Path(__file__).resolve().parent
-load_dotenv(PROJECT_DIR / ".env")
+load_dotenv(PROJECT_DIR / "backend" / ".env")
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
