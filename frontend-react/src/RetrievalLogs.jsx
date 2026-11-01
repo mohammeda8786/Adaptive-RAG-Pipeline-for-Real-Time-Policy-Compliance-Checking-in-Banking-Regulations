@@ -1,7 +1,6 @@
 import { useCallback, useState } from 'react'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  || `http://${window.location.hostname || '127.0.0.1'}:8000`
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
 
 function displayDate(value) {
   if (!value) return 'Timestamp unavailable'

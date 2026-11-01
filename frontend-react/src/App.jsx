@@ -4,8 +4,7 @@ import { marked } from 'marked'
 import RetrievalLogs from './RetrievalLogs'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  || `http://${window.location.hostname || '127.0.0.1'}:8000`
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
 
 function formatAnswer(value, sources = []) {
   const sourceIds = new Set(sources.map((source) => source.id))

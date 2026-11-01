@@ -1,8 +1,7 @@
 import { useEffect, useState } from 'react'
 import './App.css'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL
-  || `http://${window.location.hostname || '127.0.0.1'}:8000`
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
 
 const GOOGLE_ERRORS = {
   invalid_state: 'Google sign-in expired or could not be verified. Please try again.',

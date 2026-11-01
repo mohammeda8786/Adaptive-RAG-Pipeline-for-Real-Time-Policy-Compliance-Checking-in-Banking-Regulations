@@ -19,7 +19,7 @@ Python 3.10+ is recommended. From the project root on Windows:
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -r backend/requirements.txt
 Copy-Item backend\.env.example backend\.env
 Copy-Item frontend-react\.env.example frontend-react\.env
 ```
@@ -47,7 +47,8 @@ The command regenerates a validated chunks JSON and progress file for each sourc
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model. |
 | `JWT_SECRET_KEY` | unset | Server-only signing key for JWT cookies; use a unique random value of at least 32 bytes. |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT session length (5–1440 minutes). |
-| `JWT_COOKIE_SECURE` | `0` | Set to `1` to require HTTPS for the authentication cookie. |
+| `JWT_COOKIE_SECURE` | `1` | Set to `1` to require HTTPS for authentication and OAuth cookies; use `0` only for local HTTP development. |
+| `JWT_COOKIE_SAMESITE` | `none` over HTTPS, `lax` locally | Controls cross-site cookie behavior. Use `none` when frontend and backend have different domains. |
 | `GOOGLE_CLIENT_ID` | unset | Optional server-side Google OAuth web client ID. |
 | `GOOGLE_CLIENT_SECRET` | unset | Optional server-side Google OAuth client secret. |
 | `GOOGLE_REDIRECT_URI` | unset | Exact registered OAuth callback URL, ending in `/api/auth/google/callback`. |
@@ -99,6 +100,101 @@ Open <http://127.0.0.1:8000>. The FastAPI service and UI share the same origin. 
 | `GET` | `/api/settings` | Runtime and report capability settings. |
 
 PDF is available for all report types. CSV is offered only for compliance gap reports. Reports use background jobs and expose real states: queued, preparing, retrieving evidence, analyzing compliance when a policy is supplied, generating document, ready, and failed. A missing LLM does not fabricate findings; generated documents identify the analysis as retrieval-only and require manual review.
+
+## Production deployment
+
+The repository is configured for a split deployment:
+
+- React frontend on Vercel.
+- FastAPI backend on Render.
+- Qdrant Cloud vector database.
+- Groq API for answer and report generation.
+
+Deployment configuration is provided by `render.yaml` and `vercel.json`.
+
+### Render backend
+
+Create a Python web service from the repository root. Use:
+
+```text
+Build command: pip install -r backend/requirements.txt
+Start command: python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+Health check path: /api/health
+Python runtime: 3.11.9
+```
+
+Set these Render environment variables with secret values entered directly in Render:
+
+| Variable | Required value or purpose |
+| --- | --- |
+| `QDRANT_URL` | Qdrant Cloud HTTPS cluster URL. |
+| `QDRANT_API_KEY` | Qdrant Cloud API key. |
+| `QDRANT_COLLECTION` | Indexed collection, normally `rbi_regulations`. |
+| `GROQ_API_KEY` | Groq API key. |
+| `GROQ_MODEL` | Groq model name. |
+| `JWT_SECRET_KEY` | Random secret of at least 32 bytes. |
+| `JWT_COOKIE_SECURE` | `1`. |
+| `JWT_COOKIE_SAMESITE` | `none` for a separate Vercel frontend domain. |
+| `RBI_CORS_ORIGINS` | Exact Vercel frontend origin, without a trailing slash. |
+| `GOOGLE_CLIENT_ID` | Google OAuth web client ID. |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth web client secret, backend-only. |
+| `GOOGLE_REDIRECT_URI` | `https://<render-service>.onrender.com/api/auth/google/callback`. |
+| `RBI_FRONTEND_URL` | Exact Vercel frontend origin, normally `https://<project>.vercel.app`. |
+| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Optional; defaults to `15`. |
+| `RBI_DISABLE_LLM` | Optional; use `0` for normal operation. |
+
+Render disk storage is required if SQLite conversations, uploaded policies, generated reports, and audit files must persist across restarts. The free Render filesystem is ephemeral. Configure:
+
+```text
+RBI_DATA_DIR=/path/to/persistent/disk/data
+RBI_DATABASE_PATH=/path/to/persistent/disk/data/rbi_chat.sqlite3
+RBI_REPORT_DIR=/path/to/persistent/disk/data/reports
+RBI_POLICY_DIR=/path/to/persistent/disk/data/bank_policies
+```
+
+Do not place secrets in `render.yaml`.
+
+### Vercel frontend
+
+Import the repository and configure:
+
+```text
+Root Directory: frontend-react
+Install Command: npm ci
+Build Command: npm run build
+Output Directory: dist
+```
+
+Set the Vercel environment variable:
+
+```text
+VITE_API_BASE_URL=https://<render-service>.onrender.com
+```
+
+The frontend contains no backend credentials. Redeploy after changing a `VITE_` variable.
+
+### Google OAuth production setup
+
+Add this exact authorized redirect URI in Google Cloud Console:
+
+```text
+https://<render-service>.onrender.com/api/auth/google/callback
+```
+
+Keep the callback HTTPS and keep `GOOGLE_CLIENT_SECRET` only in Render environment settings. The frontend is redirected to the configured `RBI_FRONTEND_URL` after sign-in.
+
+### Deployment sequence
+
+1. Rotate any credentials that were previously stored in a workspace `.env` file.
+2. Configure the Render environment variables and deploy the backend.
+3. Verify `https://<render-service>.onrender.com/api/health`.
+4. Add the Vercel frontend URL to Render `RBI_CORS_ORIGINS`.
+5. Deploy the frontend with its Render backend URL.
+6. Register the production callback URL in Google Cloud Console.
+7. Update Render OAuth variables and redeploy the backend.
+8. Test registration, login, Google sign-in, chat retrieval, policy upload, and report generation.
+
+Free-tier Render instances may sleep and initial requests can be slow. Render's filesystem and SQLite data do not persist reliably without persistent disk storage.
 
 ## Corpus and limitations
 

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: regulamind-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: JWT_COOKIE_SECURE
+        value: "1"
+      - key: JWT_COOKIE_SAMESITE
+        value: none
+      - key: RBI_DISABLE_LLM
+        value: "0"

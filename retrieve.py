@@ -92,7 +92,13 @@ def load_embedding_model():
 
     model = SentenceTransformer(MODEL_NAME)
 
-    print(f"Embedding dimensions: {model.get_embedding_dimension()}")
+    embedding_dimension = getattr(
+        model,
+        "get_sentence_embedding_dimension",
+        lambda: None,
+    )()
+    if embedding_dimension is not None:
+        print(f"Embedding dimensions: {embedding_dimension}")
 
     return model
 

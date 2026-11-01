@@ -102,7 +102,7 @@ def set_auth_cookie(response: Response, token: str, max_age: int) -> None:
         max_age=max_age,
         httponly=True,
         secure=jwt_cookie_secure(),
-        samesite="lax",
+        samesite=jwt_cookie_samesite(),
         path=JWT_COOKIE_PATH,
     )
 
@@ -112,7 +112,7 @@ def clear_auth_cookie(response: Response) -> None:
         key=JWT_COOKIE_NAME,
         httponly=True,
         secure=jwt_cookie_secure(),
-        samesite="lax",
+        samesite=jwt_cookie_samesite(),
         path=JWT_COOKIE_PATH,
     )
 
@@ -203,7 +203,7 @@ def _oauth_cookie(response: Response, key: str, value: str) -> None:
         max_age=GOOGLE_FLOW_MAX_AGE,
         httponly=True,
         secure=jwt_cookie_secure(),
-        samesite="lax",
+        samesite=jwt_cookie_samesite(),
         path=GOOGLE_COOKIE_PATH,
     )
 
@@ -214,7 +214,7 @@ def _clear_google_oauth_cookies(response: Response) -> None:
             key=key,
             httponly=True,
             secure=jwt_cookie_secure(),
-            samesite="lax",
+            samesite=jwt_cookie_samesite(),
             path=GOOGLE_COOKIE_PATH,
         )
 
@@ -542,9 +542,16 @@ def token_lifetime_minutes() -> int:
 
 
 def jwt_cookie_secure() -> bool:
-    return os.getenv("JWT_COOKIE_SECURE", "0").strip().lower() in {
+    return os.getenv("JWT_COOKIE_SECURE", "1").strip().lower() in {
         "1", "true", "yes", "on",
     }
+
+
+def jwt_cookie_samesite() -> str:
+    value = os.getenv("JWT_COOKIE_SAMESITE", "").strip().lower()
+    if value in {"lax", "strict", "none"}:
+        return value
+    return "none" if jwt_cookie_secure() else "lax"
 
 
 def auth_is_configured() -> bool:
