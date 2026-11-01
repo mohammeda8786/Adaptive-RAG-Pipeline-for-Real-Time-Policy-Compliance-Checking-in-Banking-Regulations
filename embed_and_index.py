@@ -8,7 +8,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
+from embedding_service import (
+    MODEL_NAME,
+    VECTOR_DIMENSION,
+    embed_documents,
+    get_embedding_model,
+)
 from retrieve import ensure_source_filter_index
 
 
@@ -19,10 +24,9 @@ from retrieve import ensure_source_filter_index
 PROJECT_ROOT = Path(__file__).resolve().parent
 CHUNKS_FILE = PROJECT_ROOT / "data" / "rbi_text" / "rbi_024_chunks.json"
 
-COLLECTION_NAME = os.getenv(
-    "QDRANT_COLLECTION", "rbi_regulations"
-)
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "rbi_regulations_bge")
+if COLLECTION_NAME == "rbi_regulations":
+    COLLECTION_NAME = "rbi_regulations_bge"
 BATCH_SIZE = 32
 
 # Stable namespace for deterministic chunk IDs
@@ -255,11 +259,8 @@ def main(chunks_files: list[Path] | None = None):
     print(f"Loaded {len(chunks)} chunks.")
 
     print(f"Loading embedding model: {MODEL_NAME}")
-    model = SentenceTransformer(MODEL_NAME)
-
-    vector_size = model.get_sentence_embedding_dimension()
-    if vector_size is None:
-        raise RuntimeError("Could not determine embedding dimension.")
+    get_embedding_model()
+    vector_size = VECTOR_DIMENSION
 
     print(f"Embedding dimension: {vector_size}")
 
@@ -273,13 +274,7 @@ def main(chunks_files: list[Path] | None = None):
         batch = chunks[start:start + BATCH_SIZE]
         texts = [chunk["text"] for chunk in batch]
 
-        vectors = model.encode(
-            texts,
-            batch_size=BATCH_SIZE,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        )
+        vectors = embed_documents(texts)
 
         points = []
 
@@ -289,7 +284,7 @@ def main(chunks_files: list[Path] | None = None):
             points.append(
                 models.PointStruct(
                     id=point_id,
-                    vector=vector.tolist(),
+                    vector=vector,
                     payload=payload,
                 )
             )

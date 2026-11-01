@@ -4,7 +4,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from fastembed.rerank.cross_encoder import TextCrossEncoder
+from embedding_service import embed_query
 
 
 # --------------------------------------------------
@@ -16,10 +17,12 @@ load_dotenv(PROJECT_DIR / "backend" / ".env")
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "rbi_regulations")
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "rbi_regulations_bge")
+if COLLECTION_NAME == "rbi_regulations":
+    COLLECTION_NAME = "rbi_regulations_bge"
 
 # Keep the embedding model used by the existing RAG project.
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
 
 # The standalone cross-encoder to evaluate.
 RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
@@ -121,13 +124,10 @@ def main():
     print(f"Collection points: {collection_info.points_count}")
 
     print(f"\nLoading embedding model: {EMBEDDING_MODEL_NAME}")
-    embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+    print(EMBEDDING_MODEL_NAME)
 
     print(f"Embedding the question: {question}")
-    query_vector = embedding_model.encode(
-        question,
-        convert_to_numpy=True,
-    ).tolist()
+    query_vector = embed_query(question)
 
     # Stage 1: existing vector retrieval. No collection changes.
     print(f"\nRetrieving top {TOP_K} candidates from Qdrant...")
@@ -183,7 +183,7 @@ def main():
 
     # Stage 2: load the cross-encoder.
     print(f"\nLoading reranker: {RERANKER_MODEL_NAME}")
-    reranker = CrossEncoder(RERANKER_MODEL_NAME)
+    reranker = TextCrossEncoder(model_name=RERANKER_MODEL_NAME)
 
     pairs = [
         (question, item["text"])
@@ -191,7 +191,7 @@ def main():
     ]
 
     print(f"Scoring {len(pairs)} question-passage pairs...")
-    scores = reranker.predict(pairs, show_progress_bar=True)
+    scores = reranker.rerank(question, [item["text"] for item in candidates])
 
     # Stage 3: sort the same candidates by cross-encoder score.
     reranked = []

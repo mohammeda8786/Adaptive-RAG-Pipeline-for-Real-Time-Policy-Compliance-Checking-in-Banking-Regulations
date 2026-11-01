@@ -1,10 +1,10 @@
 services:
   - type: web
     name: regulamind-api
-    runtime: python
+    runtime: docker
     plan: free
-    buildCommand: pip install -r backend/requirements.txt
-    startCommand: python -m uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
@@ -15,3 +15,13 @@ services:
         value: none
       - key: RBI_DISABLE_LLM
         value: "0"
+
+  - type: web
+    name: regulamind-web
+    runtime: docker
+    plan: free
+    dockerfilePath: ./frontend-react/Dockerfile
+    dockerContext: ./frontend-react
+    envVars:
+      - key: API_UPSTREAM
+        value: https://regulamind-api.onrender.com

@@ -8,5 +8,5 @@ pypdf>=5.0
 qdrant-client>=1.10
 reportlab>=4.2
 requests>=2.31
-sentence-transformers>=3.0
+fastembed>=0.7
 uvicorn[standard]>=0.30

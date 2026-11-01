@@ -1,0 +1,45 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: regulamind-backend:local
+    env_file:
+      - ./backend/.env
+    environment:
+      PORT: 8000
+      QDRANT_COLLECTION: rbi_regulations_bge
+      RBI_DATA_DIR: /app/data
+      RBI_DATABASE_PATH: /app/data/rbi_chat.sqlite3
+      RBI_REPORT_DIR: /app/data/reports
+      RBI_POLICY_DIR: /app/data/bank_policies
+      RBI_QUERY_AUDIT_LOG: /app/data/query_analyzer_audit.jsonl
+      JWT_COOKIE_SECURE: 0
+      JWT_COOKIE_SAMESITE: lax
+      RBI_FRONTEND_URL: http://localhost:8080
+      RBI_CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+    ports:
+      - "8000:8000"
+    volumes:
+      - regulamind-data:/app/data
+      - regulamind-models:/app/.cache/fastembed
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend-react
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ""
+    image: regulamind-frontend:local
+    environment:
+      API_UPSTREAM: http://backend:8000
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  regulamind-data:
+  regulamind-models:

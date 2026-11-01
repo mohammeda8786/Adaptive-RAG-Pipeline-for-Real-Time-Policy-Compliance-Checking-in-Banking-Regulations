@@ -3,11 +3,12 @@ import os
 import sys
 import argparse
 from pathlib import Path
+from functools import lru_cache
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
-from sentence_transformers import SentenceTransformer
 from groq import Groq
+from embedding_service import VECTOR_DIMENSION, embed_query, get_embedding_model
 
 
 # --------------------------------------------------
@@ -19,16 +20,16 @@ load_dotenv(PROJECT_ROOT / "backend" / ".env", override=False)
 
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
-COLLECTION_NAME = os.getenv(
-    "QDRANT_COLLECTION", "rbi_regulations"
-)
+COLLECTION_NAME = os.getenv("QDRANT_COLLECTION", "rbi_regulations_bge")
+if COLLECTION_NAME == "rbi_regulations":
+    COLLECTION_NAME = "rbi_regulations_bge"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL", "openai/gpt-oss-20b"
 )
 
-MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+MODEL_NAME = "BAAI/bge-small-en-v1.5"
 DEFAULT_TOP_K = 5
 MIN_CHUNK_LENGTH = 150
 
@@ -37,6 +38,7 @@ MIN_CHUNK_LENGTH = 150
 # Connect to Qdrant Cloud
 # --------------------------------------------------
 
+@lru_cache(maxsize=1)
 def connect_qdrant():
     if not QDRANT_URL or not QDRANT_API_KEY:
         raise EnvironmentError(
@@ -69,6 +71,7 @@ def ensure_source_filter_index(client):
 # Connect to Groq
 # --------------------------------------------------
 
+@lru_cache(maxsize=1)
 def connect_groq():
     if not GROQ_API_KEY:
         raise EnvironmentError(
@@ -87,19 +90,11 @@ def connect_groq():
 # Load embedding model
 # --------------------------------------------------
 
+@lru_cache(maxsize=1)
 def load_embedding_model():
     print(f"Loading embedding model: {MODEL_NAME}")
-
-    model = SentenceTransformer(MODEL_NAME)
-
-    embedding_dimension = getattr(
-        model,
-        "get_sentence_embedding_dimension",
-        lambda: None,
-    )()
-    if embedding_dimension is not None:
-        print(f"Embedding dimensions: {embedding_dimension}")
-
+    model = get_embedding_model()
+    print(f"Embedding dimensions: {VECTOR_DIMENSION}")
     return model
 
 
@@ -117,11 +112,8 @@ def retrieve_chunks(
     if not question or not question.strip():
         raise ValueError("Please enter a question.")
 
-    query_vector = model.encode(
-        question.strip(),
-        normalize_embeddings=True,
-        convert_to_numpy=True,
-    )
+    del model
+    query_vector = embed_query(question)
 
     query_filter = None
     if source_files:
@@ -136,7 +128,7 @@ def retrieve_chunks(
 
     response = client.query_points(
         collection_name=COLLECTION_NAME,
-        query=query_vector.tolist(),
+        query=query_vector,
         limit=max(top_k * 4, 20),
         query_filter=query_filter,
         with_payload=True,

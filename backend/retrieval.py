@@ -13,6 +13,7 @@ from retrieve import (
     load_embedding_model,
     retrieve_chunks,
 )
+from embedding_service import embed_query
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,24 +89,30 @@ class RegulatoryRetriever:
             return
 
         self._state = "connecting_to_qdrant"
-        self._client = connect_qdrant()
-        collection = self._client.get_collection(COLLECTION_NAME)
-        self._point_count = collection.points_count or 0
-        ensure_source_filter_index(self._client)
+        try:
+            self._client = connect_qdrant()
+            collection = self._client.get_collection(COLLECTION_NAME)
+            self._point_count = collection.points_count or 0
+            ensure_source_filter_index(self._client)
 
-        self._state = "loading_embedding_model"
-        self._model = load_embedding_model()
+            self._state = "loading_embedding_model"
+            self._model = load_embedding_model()
 
-        self._state = "loading_sources"
-        self._sources = self._load_sources()
-        if not self._sources:
-            raise RuntimeError(
-                f"No source documents found in Qdrant collection {COLLECTION_NAME!r}."
-            )
+            self._state = "loading_sources"
+            self._sources = self._load_sources()
+            if not self._sources:
+                raise RuntimeError(
+                    f"No source documents found in Qdrant collection {COLLECTION_NAME!r}."
+                )
 
-        self._ready = True
-        self._state = "ready"
-        self._error = None
+            self._ready = True
+            self._state = "ready"
+            self._error = None
+        except Exception as exc:
+            self._ready = False
+            self._state = "error"
+            self._error = str(exc)
+            raise
 
     def _load_sources(self) -> list[dict[str, str]]:
         if self._client is None:
@@ -208,7 +215,7 @@ class RegulatoryRetriever:
     ) -> dict[str, Any]:
         if not self._ready:
             self.initialize()
-        if self._client is None or self._model is None:
+        if self._client is None:
             raise RuntimeError("The Qdrant retrieval index is unavailable.")
 
         passages = retrieve_chunks(
@@ -261,15 +268,12 @@ class RegulatoryRetriever:
         """Execute one analyzer-planned query using the interactive retrieval strategy."""
         if not self._ready:
             self.initialize()
-        if self._client is None or self._model is None:
+        if self._client is None:
             raise RuntimeError("The Qdrant retrieval index is unavailable.")
         if not query or not query.strip():
             raise ValueError("Please enter a complete retrieval query.")
 
-        query_vector = self._model.encode(
-            query.strip(),
-            normalize_embeddings=False,
-        ).tolist()
+        query_vector = embed_query(query)
         response = self._client.query_points(
             collection_name=COLLECTION_NAME,
             query=query_vector,

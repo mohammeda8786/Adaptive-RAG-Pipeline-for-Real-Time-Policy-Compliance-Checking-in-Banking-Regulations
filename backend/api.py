@@ -68,10 +68,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     initialize_storage()
     try:
-        await asyncio.to_thread(retriever.initialize)
+        retriever.initialize()
     except Exception as exc:
-        retriever._state = "unavailable"
-        retriever._error = f"{type(exc).__name__}: {exc}"
+        logger.exception("Retrieval initialization failed: %s", exc)
     yield
 
 
@@ -82,17 +81,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+def _allowed_origins() -> list[str]:
+    configured = os.getenv("CORS_ORIGINS") or os.getenv("RBI_CORS_ORIGINS")
+    if not configured:
+        configured = "http://127.0.0.1:5173,http://localhost:5173"
+    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+
 # CORS configuration for frontend separation
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        for origin in os.getenv(
-            "RBI_CORS_ORIGINS",
-            "http://127.0.0.1:5173,http://localhost:5173",
-        ).split(",")
-        if origin.strip()
-    ],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,14 +103,7 @@ app.include_router(auth_router)
 async def authenticate_api(request: Request, call_next):
     path = request.url.path
     origin = request.headers.get("origin")
-    allowed_origins = {
-        value.strip()
-        for value in os.getenv(
-            "RBI_CORS_ORIGINS",
-            "http://127.0.0.1:5173,http://localhost:5173",
-        ).split(",")
-        if value.strip()
-    }
+    allowed_origins = set(_allowed_origins())
     same_origin = str(request.base_url).rstrip("/")
     if (
         request.method not in {"GET", "HEAD", "OPTIONS"}
@@ -667,6 +659,11 @@ async def health() -> dict[str, Any]:
         "llm_model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
         "report_formats": {"default": ["pdf"], "gap_analysis": ["pdf", "csv"]},
     }
+
+
+@app.get("/health")
+async def container_health() -> dict[str, bool]:
+    return {"ok": True}
 
 
 @app.get("/api/retrieval/logs")

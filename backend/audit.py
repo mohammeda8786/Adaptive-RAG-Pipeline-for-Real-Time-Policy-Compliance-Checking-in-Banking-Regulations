@@ -11,10 +11,11 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = Path(os.getenv("RBI_DATA_DIR", ROOT / "data"))
 AUDIT_LOG_PATH = Path(
     os.getenv(
         "RBI_QUERY_AUDIT_LOG",
-        str(ROOT / "data" / "query_analyzer_audit.jsonl"),
+        str(DATA_DIR / "query_analyzer_audit.jsonl"),
     )
 )
 _write_lock = threading.Lock()
