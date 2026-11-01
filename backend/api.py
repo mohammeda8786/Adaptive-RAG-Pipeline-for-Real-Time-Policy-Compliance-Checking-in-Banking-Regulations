@@ -84,7 +84,7 @@ app = FastAPI(
 def _allowed_origins() -> list[str]:
     configured = os.getenv("CORS_ORIGINS") or os.getenv("RBI_CORS_ORIGINS")
     if not configured:
-        configured = "http://127.0.0.1:5173,http://localhost:5173"
+        configured = "http://127.0.0.1:5173,http://localhost:5173,https://regulamind-frontend.onrender.com/"
     return [origin.strip() for origin in configured.split(",") if origin.strip()]
 
 
