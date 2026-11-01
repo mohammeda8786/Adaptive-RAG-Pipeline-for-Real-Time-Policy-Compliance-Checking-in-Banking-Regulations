@@ -9,10 +9,6 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: JWT_COOKIE_SECURE
-        value: "1"
-      - key: JWT_COOKIE_SAMESITE
-        value: none
       - key: RBI_DISABLE_LLM
         value: "0"
 

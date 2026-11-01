@@ -42,8 +42,7 @@ def initialize_storage() -> None:
                 name TEXT NOT NULL,
                 email TEXT NOT NULL UNIQUE COLLATE NOCASE,
                 password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                google_sub TEXT UNIQUE
+                created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS conversations (
                 id TEXT PRIMARY KEY,
@@ -99,14 +98,11 @@ def initialize_storage() -> None:
                 ON reports(created_at DESC);
             """
         )
-        user_columns = {
-            row["name"] for row in connection.execute("PRAGMA table_info(users)")
-        }
-        if "google_sub" not in user_columns:
-            connection.execute("ALTER TABLE users ADD COLUMN google_sub TEXT")
         connection.execute(
-            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_sub "
-            "ON users(google_sub) WHERE google_sub IS NOT NULL"
+            "INSERT OR IGNORE INTO users "
+            "(id, name, email, password_hash, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("anonymous", "Local User", "local@localhost", "", utc_now()),
         )
         for table, column in (
             ("conversations", "owner_id"),

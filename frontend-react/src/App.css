@@ -287,15 +287,6 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .auth-switch { margin-top: 20px; color: #6d7b89; text-align: center; font-size: 11px; }
 .auth-switch a { color: var(--navy); font-weight: 600; text-decoration: none; }
 .auth-disclaimer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); color: #8a96a3; text-align: center; font-size: 9px; line-height: 1.5; }
-.account-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 4px 12px; border-bottom: 1px solid #dfe5e9; }
-.account-avatar { display: grid; place-items: center; flex: 0 0 28px; width: 28px; height: 28px; border-radius: 50%; background: var(--blue-wash); color: var(--navy); font-size: 11px; font-weight: 700; }
-.account-copy { display: grid; flex: 1; min-width: 0; gap: 1px; }
-.account-copy strong, .account-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-copy strong { color: var(--navy-2); font-size: 10px; }
-.account-copy small { color: var(--muted); font-size: 9px; }
-.account-signout { padding: 5px 7px; border: 1px solid var(--line-strong); border-radius: 6px; background: white; color: var(--navy); font-size: 9px; white-space: nowrap; }
-.account-signout:hover { border-color: #a9bfce; background: #f7fafc; }
-
 @media (max-width: 768px) {
   .topbar-actions { gap: 7px; }
   .model-indicator { display: none; }

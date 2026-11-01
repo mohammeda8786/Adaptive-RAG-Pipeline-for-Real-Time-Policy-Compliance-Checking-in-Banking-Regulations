@@ -2,7 +2,7 @@
 
 RegulaMind AI is a single-origin FastAPI application with a focused chat UI for evidence-grounded RBI questions and saved recent conversations. The backend also exposes report-generation APIs, but report, compliance, and settings screens are intentionally not part of the current UI. Chat answers and report jobs share one retrieval service over the configured Qdrant collection.
 
-Accounts use server-issued JWTs in an HTTP-only cookie. Registration and login require `JWT_SECRET_KEY`; conversations, uploaded policies, and reports are scoped to the signed-in account. Records created before account ownership was added remain unassigned and are not visible to new accounts.
+The application runs without authentication. Conversations, uploaded policies, and reports are shared through the local or deployed API.
 
 ## Retrieval and chat integration
 
@@ -24,9 +24,7 @@ Copy-Item backend\.env.example backend\.env
 Copy-Item frontend-react\.env.example frontend-react\.env
 ```
 
-Backend secrets and service settings belong in `backend\.env`. The React app's public settings belong in `frontend-react\.env`; only `VITE_` variables are exposed to browser code, so never put secrets there. Set `QDRANT_URL`, `QDRANT_API_KEY`, `GROQ_API_KEY`, and `JWT_SECRET_KEY` in the backend environment. Generate a unique JWT signing key, for example with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, then paste its output as the value of `JWT_SECRET_KEY`. Do not use an issued login token as the signing key. Set `JWT_COOKIE_SECURE=1` when serving over HTTPS and update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. If a key has been exposed, revoke it and enter a replacement directly in `backend\.env`. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
-
-Google sign-in is optional. In Google Cloud Console, create a Web OAuth client, add `http://127.0.0.1:8000/api/auth/google/callback` as an authorized redirect URI for local development, and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, and `RBI_FRONTEND_URL` in `backend\.env`. For deployment, use HTTPS callback/frontend URLs and register the exact callback URI with Google. The backend verifies the profile through Google's HTTPS OpenID Connect userinfo endpoint, requires a verified email, and links an existing account with the same verified email. Never put the Google client secret in the frontend environment file.
+Backend secrets and service settings belong in `backend\.env`. The React app's public settings belong in `frontend-react\.env`; only `VITE_` variables are exposed to browser code, so never put secrets there. Set `QDRANT_URL`, `QDRANT_API_KEY`, and `GROQ_API_KEY` in the backend environment. Update `RBI_CORS_ORIGINS` to the exact frontend origins when hosting the UI separately. Set `QDRANT_COLLECTION` to the collection populated by `embed_and_index.py`; it defaults to `rbi_regulations`.
 
 To split and index every numbered `data/rbi_text/rbi_<number>.txt` source in one step, configure `QDRANT_URL` and `QDRANT_API_KEY` in `backend\.env` and run:
 
@@ -45,15 +43,7 @@ The command regenerates a validated chunks JSON and progress file for each sourc
 | `QDRANT_COLLECTION` | `rbi_regulations` | Collection populated by the RBI indexing pipeline. |
 | `GROQ_API_KEY` | unset | Enables grounded chat and structured report analysis. |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq chat-completion model. |
-| `JWT_SECRET_KEY` | unset | Server-only signing key for JWT cookies; use a unique random value of at least 32 bytes. |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | JWT session length (5–1440 minutes). |
-| `JWT_COOKIE_SECURE` | `1` | Set to `1` to require HTTPS for authentication and OAuth cookies; use `0` only for local HTTP development. |
-| `JWT_COOKIE_SAMESITE` | `none` over HTTPS, `lax` locally | Controls cross-site cookie behavior. Use `none` when frontend and backend have different domains. |
-| `GOOGLE_CLIENT_ID` | unset | Optional server-side Google OAuth web client ID. |
-| `GOOGLE_CLIENT_SECRET` | unset | Optional server-side Google OAuth client secret. |
-| `GOOGLE_REDIRECT_URI` | unset | Exact registered OAuth callback URL, ending in `/api/auth/google/callback`. |
-| `RBI_FRONTEND_URL` | `http://127.0.0.1:5173` | Frontend origin to return to after Google sign-in. |
-| `RBI_CORS_ORIGINS` | Local Vite origins | Comma-separated exact frontend origins allowed to send authenticated API requests. |
+| `RBI_CORS_ORIGINS` | Local Vite origins | Comma-separated exact frontend origins allowed to call the API. |
 | `RBI_DATA_DIR` | `data` | Root for local SQLite storage and generated files. |
 | `RBI_DATABASE_PATH` | `data/rbi_chat.sqlite3` | Conversations, uploaded policies, report jobs, and metadata. |
 | `RBI_REPORT_DIR` | `data/reports` | Generated PDF/CSV files. |
@@ -75,12 +65,6 @@ Open <http://127.0.0.1:8000>. The FastAPI service and UI share the same origin. 
 | Method | Endpoint | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/health` | Retrieval readiness and configured provider status. |
-| `POST` | `/api/auth/register` | Create an account and issue an HTTP-only JWT cookie. |
-| `POST` | `/api/auth/login` | Verify credentials and issue an HTTP-only JWT cookie. |
-| `GET` | `/api/auth/google` | Begin Google OAuth sign-in. |
-| `GET` | `/api/auth/google/callback` | Verify the Google response and issue the HTTP-only JWT cookie. |
-| `GET` | `/api/auth/me` | Return the signed-in account. |
-| `POST` | `/api/auth/logout` | Clear the authentication cookie. |
 | `GET` | `/api/retrieval/logs?limit=50` | Recent retrieval and answer audit traces; optionally filter with `request_id`. |
 | `GET` | `/api/sources` | Indexed RBI documents. |
 | `POST` | `/api/chat` | Grounded chat; accepts `conversation_id`, `message`, and optional `policy_id`. |
@@ -132,15 +116,7 @@ Set these Render environment variables with secret values entered directly in Re
 | `QDRANT_COLLECTION` | Indexed collection, normally `rbi_regulations`. |
 | `GROQ_API_KEY` | Groq API key. |
 | `GROQ_MODEL` | Groq model name. |
-| `JWT_SECRET_KEY` | Random secret of at least 32 bytes. |
-| `JWT_COOKIE_SECURE` | `1`. |
-| `JWT_COOKIE_SAMESITE` | `none` for a separate Vercel frontend domain. |
 | `RBI_CORS_ORIGINS` | Exact Vercel frontend origin, without a trailing slash. |
-| `GOOGLE_CLIENT_ID` | Google OAuth web client ID. |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth web client secret, backend-only. |
-| `GOOGLE_REDIRECT_URI` | `https://<render-service>.onrender.com/api/auth/google/callback`. |
-| `RBI_FRONTEND_URL` | Exact Vercel frontend origin, normally `https://<project>.vercel.app`. |
-| `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | Optional; defaults to `15`. |
 | `RBI_DISABLE_LLM` | Optional; use `0` for normal operation. |
 
 Render disk storage is required if SQLite conversations, uploaded policies, generated reports, and audit files must persist across restarts. The free Render filesystem is ephemeral. Configure:
@@ -172,16 +148,6 @@ VITE_API_BASE_URL=https://<render-service>.onrender.com
 ```
 
 The frontend contains no backend credentials. Redeploy after changing a `VITE_` variable.
-
-### Google OAuth production setup
-
-Add this exact authorized redirect URI in Google Cloud Console:
-
-```text
-https://<render-service>.onrender.com/api/auth/google/callback
-```
-
-Keep the callback HTTPS and keep `GOOGLE_CLIENT_SECRET` only in Render environment settings. The frontend is redirected to the configured `RBI_FRONTEND_URL` after sign-in.
 
 ### Deployment sequence
 

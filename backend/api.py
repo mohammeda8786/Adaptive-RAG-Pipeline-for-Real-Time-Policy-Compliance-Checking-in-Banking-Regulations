@@ -29,11 +29,6 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from starlette.concurrency import iterate_in_threadpool
 
-from .auth import (
-    auth_is_configured,
-    router as auth_router,
-    user_from_request,
-)
 from .reports import (
     REPORT_TYPES,
     analyze_evidence,
@@ -96,11 +91,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(auth_router)
-
-
 @app.middleware("http")
-async def authenticate_api(request: Request, call_next):
+async def api_request(request: Request, call_next):
     path = request.url.path
     origin = request.headers.get("origin")
     allowed_origins = set(_allowed_origins())
@@ -114,36 +106,11 @@ async def authenticate_api(request: Request, call_next):
             status_code=403,
             content={"detail": "Request origin is not allowed."},
         )
-    public_paths = {
-        "/api/health",
-        "/api/auth/register",
-        "/api/auth/login",
-        "/api/auth/logout",
-        "/api/auth/providers",
-        "/api/auth/google",
-        "/api/auth/google/callback",
-    }
-    if (
-        path.startswith("/api/")
-        and path not in public_paths
-        and request.method != "OPTIONS"
-    ):
-        try:
-            user = user_from_request(request)
-        except HTTPException as exc:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail},
-            )
-        request.state.user = user
     return await call_next(request)
 
 
 def _request_user_id(request: Request) -> str:
-    user = getattr(request.state, "user", None)
-    if not user:
-        raise HTTPException(status_code=401, detail="Authentication is required.")
-    return user["id"]
+    return "anonymous"
 
 
 def _validate_conversation_owner(conversation_id: str | None, user_id: str) -> None:
@@ -653,7 +620,6 @@ def _infer_report_type(message: str) -> str:
 async def health() -> dict[str, Any]:
     return {
         "status": "ok",
-        "authentication_configured": auth_is_configured(),
         "retrieval": retriever.status,
         "llm_configured": bool(os.getenv("GROQ_API_KEY")),
         "llm_model": os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),

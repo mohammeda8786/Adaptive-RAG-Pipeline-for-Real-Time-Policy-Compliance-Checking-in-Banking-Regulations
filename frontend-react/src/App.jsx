@@ -141,7 +141,6 @@ function App() {
   const inputRef = useRef(null)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState({ ready: false, state: 'Connecting...', error: null, point_count: 0 })
-  const [user, setUser] = useState(null)
   const scrollRef = useRef(null)
 
   const addToast = useCallback((message, isError = false) => {
@@ -346,29 +345,10 @@ function App() {
 
   useEffect(() => {
     let active = true
-    api('/api/auth/me')
-      .then(({ user: currentUser }) => {
-        if (!active) return
-        setUser(currentUser)
-        loadStatus()
-        loadConversations()
-      })
-      .catch(() => {
-        if (active && window.location.pathname !== '/login') {
-          window.location.replace('/login')
-        }
-      })
+    loadStatus()
+    loadConversations()
     return () => { active = false }
   }, [loadConversations, loadStatus])
-
-  const signOut = useCallback(async () => {
-    try {
-      await api('/api/auth/logout', { method: 'POST' })
-      window.location.assign('/login')
-    } catch (error) {
-      addToast(error.message, true)
-    }
-  }, [addToast])
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -479,13 +459,6 @@ function App() {
         </div>
 
         <div className="sidebar-bottom">
-          {user && (
-            <div className="account-row">
-              <span className="account-avatar" aria-hidden="true">{user.name.slice(0, 1).toUpperCase()}</span>
-              <span className="account-copy"><strong>{user.name}</strong><small>{user.email}</small></span>
-              <button className="account-signout" type="button" onClick={signOut}>Sign out</button>
-            </div>
-          )}
           <div className="workspace-status">
             <span className={`status-dot${status.ready ? ' ready' : status.state === 'Index unavailable' ? ' error' : ''}`}></span>
             <span id="workspaceStatus">{status.ready ? `RBI index: ${status.point_count} sources` : status.state}</span>
@@ -506,9 +479,6 @@ function App() {
           <div className="topbar-actions">
             <span className="model-indicator"><i></i><span id="modelLabel">RBI sources</span></span>
             <RetrievalLogs />
-            {user
-              ? <button className="topbar-auth-link" type="button" onClick={signOut}>Log out</button>
-              : <a className="topbar-auth-link" href="/login">Sign in</a>}
           </div>
         </header>
 
