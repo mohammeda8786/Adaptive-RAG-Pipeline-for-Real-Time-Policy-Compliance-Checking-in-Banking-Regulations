@@ -67,6 +67,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     initialize_storage()
+    try:
+        await asyncio.to_thread(retriever.initialize)
+    except Exception as exc:
+        retriever._state = "unavailable"
+        retriever._error = f"{type(exc).__name__}: {exc}"
     yield
 
 

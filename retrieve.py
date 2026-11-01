@@ -6,6 +6,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from qdrant_client import QdrantClient, models
+from sentence_transformers import SentenceTransformer
 from groq import Groq
 
 
@@ -89,18 +90,12 @@ def connect_groq():
 def load_embedding_model():
     print(f"Loading embedding model: {MODEL_NAME}")
 
-    from sentence_transformers import SentenceTransformer
-
     model = SentenceTransformer(MODEL_NAME)
 
     embedding_dimension = getattr(
         model,
-        "get_embedding_dimension",
-        lambda: getattr(
-            model,
-            "get_sentence_embedding_dimension",
-            lambda: None,
-        )(),
+        "get_sentence_embedding_dimension",
+        lambda: None,
     )()
     if embedding_dimension is not None:
         print(f"Embedding dimensions: {embedding_dimension}")
