@@ -27,8 +27,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend-react
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: frontend.Dockerfile
       args:
         VITE_API_BASE_URL: ""
     image: regulamind-frontend:local

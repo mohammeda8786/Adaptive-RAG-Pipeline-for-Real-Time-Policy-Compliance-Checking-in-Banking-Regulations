@@ -20,8 +20,8 @@ services:
     name: regulamind-web
     runtime: docker
     plan: free
-    dockerfilePath: ./frontend-react/Dockerfile
-    dockerContext: ./frontend-react
+    dockerfilePath: ./frontend.Dockerfile
+    dockerContext: .
     envVars:
       - key: API_UPSTREAM
         value: https://regulamind-api.onrender.com
